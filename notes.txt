@@ -1,9 +1,0 @@
-This repo is a research about a C#/Rust inspired programming language that would be compatible with the .NET runtime.
-
-We should consider two approaches:
-- use C# and add some kind of initial analysis that would be the same as the rust borrow checker.
-- write a new language and compiler which syntax is really close to C# but also use a borrow-checker technique to offer the same guarantees as Rust.
-
-Before doing any prototyping, we should research what makes both languages and ecosystem different, what are common points and patterns and how to reconcile them together.
-
-As an additional feature, the new language or tools should make it easier to interop with both reference language Rust and C#/.NET.
