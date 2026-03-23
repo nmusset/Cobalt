@@ -80,10 +80,12 @@ public static class CombinedPatterns
         /// <summary>
         /// Adds a connection. Pool takes ownership.
         /// </summary>
+#pragma warning disable CB0001 // List.Add is an unannotated BCL method — the analyzer can't track the transfer
         public void Add([Owned] IDisposable connection)
         {
             _connections.Add(connection);
         }
+#pragma warning restore CB0001
 
         /// <summary>
         /// Provides scoped, read-only access to the pool's connections.
@@ -113,10 +115,12 @@ public static class CombinedPatterns
     }
 
     [return: Owned]
+#pragma warning disable CB0001 // BufferedStream ctor is an unannotated BCL method — the analyzer can't track the transfer
     private static BufferedStream WrapStream([Owned] Stream inner)
     {
         return new BufferedStream(inner, 4096);
     }
+#pragma warning restore CB0001
 
     private static void UseAndDispose([Owned] IDisposable resource)
     {

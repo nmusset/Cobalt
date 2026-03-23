@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/samples/">
+    <Project Path="../samples/Cobalt.Annotations.Samples/Cobalt.Annotations.Samples.csproj" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="Cobalt.Analyzers.Tests/Cobalt.Analyzers.Tests.csproj" />
+    <Project Path="Cobalt.Analyzers/Cobalt.Analyzers.csproj" />
+    <Project Path="Cobalt.Annotations/Cobalt.Annotations.csproj" />
+  </Folder>
+</Solution>
