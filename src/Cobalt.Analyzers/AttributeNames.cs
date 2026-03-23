@@ -13,4 +13,6 @@ internal static class AttributeNames
     public const string MustDispose = "Cobalt.Annotations.MustDisposeAttribute";
     public const string Scoped = "Cobalt.Annotations.ScopedAttribute";
     public const string NoAlias = "Cobalt.Annotations.NoAliasAttribute";
+    public const string Sync = "Cobalt.Annotations.SyncAttribute";
+    public const string NotSync = "Cobalt.Annotations.NotSyncAttribute";
 }

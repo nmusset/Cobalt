@@ -44,6 +44,14 @@ internal static class AnalyzerTestHelper
                 System.AttributeTargets.Parameter | System.AttributeTargets.Field | System.AttributeTargets.Property,
                 Inherited = true, AllowMultiple = false)]
             public sealed class NoAliasAttribute : System.Attribute { }
+
+            [System.AttributeUsage(System.AttributeTargets.Class | System.AttributeTargets.Struct,
+                Inherited = true, AllowMultiple = false)]
+            public sealed class SyncAttribute : System.Attribute { }
+
+            [System.AttributeUsage(System.AttributeTargets.Class | System.AttributeTargets.Struct,
+                Inherited = true, AllowMultiple = false)]
+            public sealed class NotSyncAttribute : System.Attribute { }
         }
         """;
 

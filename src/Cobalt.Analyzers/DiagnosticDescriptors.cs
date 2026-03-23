@@ -88,4 +88,19 @@ internal static class DiagnosticDescriptors
                      "Both the 'using' and the callee will dispose the value. While IDisposable.Dispose() " +
                      "should be idempotent, the contradictory ownership intent is a code smell. " +
                      "Consider removing 'using' if the callee is responsible for disposal.");
+
+    /// <summary>
+    /// CB0007: A [NotSync] value is captured by a lambda passed to a concurrency API.
+    /// </summary>
+    public static readonly DiagnosticDescriptor NotSyncCapturedByConcurrentLambda = new(
+        id: "CB0007",
+        title: "Non-thread-safe value captured by concurrent lambda",
+        messageFormat: "[NotSync] value '{0}' of type '{1}' is captured by a lambda passed to '{2}' — this may cause data races",
+        category: "Cobalt.ThreadSafety",
+        defaultSeverity: DiagnosticSeverity.Warning,
+        isEnabledByDefault: true,
+        description: "A value whose type is marked [NotSync] is captured by a lambda or delegate " +
+                     "passed to a concurrency API such as Task.Run or Parallel.ForEach. " +
+                     "The value may be accessed from multiple threads simultaneously, " +
+                     "which can cause data races or corruption.");
 }
