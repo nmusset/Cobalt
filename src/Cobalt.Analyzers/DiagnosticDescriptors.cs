@@ -72,4 +72,20 @@ internal static class DiagnosticDescriptors
         description: "Passing an owned value to a parameter that lacks [Owned], [Borrowed], or [MutBorrowed] " +
                      "means the callee might store or alias the value without the caller's knowledge. " +
                      "Consider adding an ownership annotation to the target parameter.");
+
+    /// <summary>
+    /// CB0006: A using-declared variable is passed to an [Owned] parameter, creating ambiguous ownership.
+    /// </summary>
+    public static readonly DiagnosticDescriptor UsingVariableOwnershipTransfer = new(
+        id: "CB0006",
+        title: "Using-declared variable has ownership transferred",
+        messageFormat: "Variable '{0}' is declared with 'using' but ownership is transferred — ownership intent is ambiguous",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Info,
+        isEnabledByDefault: true,
+        description: "A variable declared with 'using' will be disposed at end of scope, " +
+                     "but passing it to an [Owned] parameter transfers disposal responsibility to the callee. " +
+                     "Both the 'using' and the callee will dispose the value. While IDisposable.Dispose() " +
+                     "should be idempotent, the contradictory ownership intent is a code smell. " +
+                     "Consider removing 'using' if the callee is responsible for disposal.");
 }

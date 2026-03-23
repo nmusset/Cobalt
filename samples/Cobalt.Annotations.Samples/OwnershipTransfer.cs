@@ -77,4 +77,18 @@ public static class OwnershipTransfer
         // BUG: stream has been moved — CB0002 fires here.
         stream.Read(new byte[1], 0, 1);
     }
+
+    // --- Using + ownership transfer: ambiguous intent (CB0006) ---
+
+    public static void UsingWithTransferExample()
+    {
+        // 'using var' says "I dispose at end of scope".
+        // But ConsumeStream([Owned]) says "callee disposes".
+        // Both are true — the value gets disposed twice.
+        // IDisposable.Dispose() is idempotent so this is safe,
+        // but the ownership intent is contradictory.
+        // CB0006 (Info) fires on the ConsumeStream call.
+        using var stream = CreateBuffer();
+        ConsumeStream(stream);
+    }
 }

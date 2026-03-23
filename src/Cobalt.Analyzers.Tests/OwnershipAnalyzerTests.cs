@@ -516,4 +516,126 @@ public class OwnershipAnalyzerTests
         var test = AnalyzerTestHelper.CreateTest<OwnershipAnalyzer>(source);
         await test.RunAsync();
     }
+
+    // ---------------------------------------------------------------
+    // CB0006: Using-declared variable has ownership transferred
+    // ---------------------------------------------------------------
+
+    [Fact]
+    public async Task UsingVariable_TransferredViaOwned_Reports_CB0006()
+    {
+        var source = """
+            using System;
+            using Cobalt.Annotations;
+
+            [MustDispose]
+            class Res : IDisposable { public void Dispose() { } }
+
+            class C
+            {
+                void M()
+                {
+                    using var r = new Res();
+                    Consume({|#0:r|});
+                }
+
+                void Consume([Owned] Res r) { r.Dispose(); }
+            }
+            """;
+
+        var test = AnalyzerTestHelper.CreateTest<OwnershipAnalyzer>(
+            source,
+            new DiagnosticResult("CB0006", Microsoft.CodeAnalysis.DiagnosticSeverity.Info)
+                .WithLocation(0).WithArguments("r"));
+
+        await test.RunAsync();
+    }
+
+    [Fact]
+    public async Task UsingVariable_TransferredViaConstructor_Reports_CB0006()
+    {
+        var source = """
+            using System;
+            using Cobalt.Annotations;
+
+            [MustDispose]
+            class Res : IDisposable { public void Dispose() { } }
+
+            class Holder : IDisposable
+            {
+                [Owned] private readonly Res _r;
+                public Holder([Owned] Res r) { _r = r; }
+                public void Dispose() { _r.Dispose(); }
+            }
+
+            class C
+            {
+                void M()
+                {
+                    using var r = new Res();
+                    var holder = new Holder({|#0:r|});
+                    holder.Dispose();
+                }
+            }
+            """;
+
+        var test = AnalyzerTestHelper.CreateTest<OwnershipAnalyzer>(
+            source,
+            new DiagnosticResult("CB0006", Microsoft.CodeAnalysis.DiagnosticSeverity.Info)
+                .WithLocation(0).WithArguments("r"));
+
+        await test.RunAsync();
+    }
+
+    [Fact]
+    public async Task UsingVariable_NotTransferred_NoCB0006()
+    {
+        var source = """
+            using System;
+            using Cobalt.Annotations;
+
+            [MustDispose]
+            class Res : IDisposable { public void Dispose() { } }
+
+            class C
+            {
+                void M()
+                {
+                    using var r = new Res();
+                    Inspect(r);
+                }
+
+                void Inspect([Borrowed] Res r) { }
+            }
+            """;
+
+        var test = AnalyzerTestHelper.CreateTest<OwnershipAnalyzer>(source);
+        await test.RunAsync();
+    }
+
+    [Fact]
+    public async Task NonUsingVariable_Transferred_NoCB0006()
+    {
+        var source = """
+            using System;
+            using Cobalt.Annotations;
+
+            [MustDispose]
+            class Res : IDisposable { public void Dispose() { } }
+
+            class C
+            {
+                void M()
+                {
+                    var r = new Res();
+                    Consume(r);
+                }
+
+                void Consume([Owned] Res r) { r.Dispose(); }
+            }
+            """;
+
+        var test = AnalyzerTestHelper.CreateTest<OwnershipAnalyzer>(source);
+        await test.RunAsync();
+    }
 }

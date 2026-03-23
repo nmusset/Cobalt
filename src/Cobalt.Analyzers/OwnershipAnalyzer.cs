@@ -14,7 +14,8 @@ public sealed class OwnershipAnalyzer : DiagnosticAnalyzer
             DiagnosticDescriptors.UseAfterMove,
             DiagnosticDescriptors.UseAfterDispose,
             DiagnosticDescriptors.OwnedValueAliased,
-            DiagnosticDescriptors.OwnedValueImplicitlyShared);
+            DiagnosticDescriptors.OwnedValueImplicitlyShared,
+            DiagnosticDescriptors.UsingVariableOwnershipTransfer);
 
     public override void Initialize(AnalysisContext context)
     {
@@ -252,6 +253,16 @@ public sealed class OwnershipAnalyzer : DiagnosticAnalyzer
 
                 if (param.HasAttribute(_known.Owned))
                 {
+                    // CB0006: If the variable is declared with 'using', transferring ownership
+                    // creates ambiguous disposal intent (both using and callee will dispose).
+                    if (_states.TryGetValue(referenced, out var priorState) && priorState == VariableState.InUsing)
+                    {
+                        context.ReportDiagnostic(Diagnostic.Create(
+                            DiagnosticDescriptors.UsingVariableOwnershipTransfer,
+                            argument.Syntax.GetLocation(),
+                            referenced.Name));
+                    }
+
                     // Ownership transfer via [Owned] parameter — source is moved.
                     _states[referenced] = VariableState.Transferred;
                     _stateChangeLocations[referenced] = argument.Syntax.GetLocation();
@@ -282,6 +293,15 @@ public sealed class OwnershipAnalyzer : DiagnosticAnalyzer
                 {
                     if (GetReferencedSymbol(argument.Value) is { } transferred)
                     {
+                        // CB0006: using-declared variable transferred via constructor.
+                        if (_states.TryGetValue(transferred, out var priorState) && priorState == VariableState.InUsing)
+                        {
+                            context.ReportDiagnostic(Diagnostic.Create(
+                                DiagnosticDescriptors.UsingVariableOwnershipTransfer,
+                                argument.Syntax.GetLocation(),
+                                transferred.Name));
+                        }
+
                         _states[transferred] = VariableState.Transferred;
                         _stateChangeLocations[transferred] = argument.Syntax.GetLocation();
                     }
