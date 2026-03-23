@@ -10,7 +10,7 @@ The MVP scope covers Phase A (analyzer) and Phase B Milestone 1 (core language c
 
 A Roslyn analyzer package that brings ownership-aware static analysis to standard C# code. This phase validates the ownership model against real .NET patterns, builds community, and generates design feedback before committing to a full compiler.
 
-### A.1 Ownership Annotation Attributes
+### A.1 Ownership Annotation Attributes ✅
 
 Define a set of custom attributes that express ownership semantics in C#:
 
@@ -23,7 +23,7 @@ Define a set of custom attributes that express ownership semantics in C#:
 
 **Deliverable:** `Cobalt.Annotations` NuGet package containing the attribute types.
 
-### A.2 IDisposable Ownership Tracking
+### A.2 IDisposable Ownership Tracking ✅
 
 Extend existing CA2000/CA2213 analysis with ownership-aware rules:
 
@@ -32,13 +32,13 @@ Extend existing CA2000/CA2213 analysis with ownership-aware rules:
 - Prevent use-after-dispose for `[Owned]` types
 - Track ownership through common patterns: factory methods, builder patterns, using declarations
 
-### A.3 Move-Semantic Discipline
+### A.3 Move-Semantic Discipline ✅
 
 - Prevent use-after-move: when an `[Owned]` value is passed to a method taking `[Owned]`, the source variable is considered moved
 - Detect accidental aliasing of single-owner values
 - Warn on implicit copies of `[Owned]` types (suggest explicit `.Clone()`)
 
-### A.4 Thread-Safety Annotations
+### A.4 Thread-Safety Annotations ✅
 
 - `[Sync]` / `[NotSync]` marker attributes for types
 - Warn when a `[NotSync]` type is captured by a lambda passed to `Task.Run` or `Parallel.ForEach`
