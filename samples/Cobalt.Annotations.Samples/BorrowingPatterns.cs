@@ -71,7 +71,8 @@ public static class BorrowingPatterns
 
         // BUG: Can't have a shared borrow and exclusive borrow simultaneously.
         // In real code this could cause a modification during enumeration.
+        // Not yet detectable — requires [Borrowed]/[MutBorrowed] conflict analysis (future).
         // var sum = SumValues(data);
-        // AppendDefaults(data, 2); // Would conflict if borrows were overlapping.
+        // AppendDefaults(data, 2);
     }
 }

@@ -26,12 +26,10 @@ public static class MoveSemantics
 
         // CB0004: assigning an owned value to another variable creates an alias.
         // The original (a) is now considered moved.
-#pragma warning disable CB0004
         var b = a;
-#pragma warning restore CB0004
 
-        // a is now moved — using it would trigger CB0002.
-        // a.Use(); // BUG: use after move
+        // BUG: a is now moved — CB0002 fires here.
+        a.Use();
 
         b.Dispose(); // b is the new owner.
     }
@@ -59,9 +57,7 @@ public static class MoveSemantics
 
         // CB0005 (Info): h is passed to a parameter without ownership annotation.
         // The callee might store or alias h without our knowledge.
-#pragma warning disable CB0005
         LogHandle(h);
-#pragma warning restore CB0005
 
         h.Dispose();
     }

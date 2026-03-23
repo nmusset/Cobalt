@@ -65,7 +65,7 @@ public static class OwnershipTransfer
         }
     }
 
-    // --- Use-after-move: the analyzer should catch this ---
+    // --- Use-after-move: the analyzer catches this (CB0002) ---
 
     public static void UseAfterMoveExample()
     {
@@ -74,7 +74,7 @@ public static class OwnershipTransfer
         // Ownership transferred to ConsumeStream.
         ConsumeStream(stream);
 
-        // BUG: stream has been moved — this should be a diagnostic.
-        // stream.Read(new byte[1], 0, 1);
+        // BUG: stream has been moved — CB0002 fires here.
+        stream.Read(new byte[1], 0, 1);
     }
 }

@@ -69,14 +69,13 @@ public static class MustDisposePatterns
         }
     }
 
-    // --- Bug: not disposed, not transferred ---
+    // --- Bug: not disposed, not transferred (CB0001 fires on 'conn') ---
 
     public static void ForgotToDispose()
     {
         var conn = Connect("Server=localhost;Database=test");
         _ = conn.Query("SELECT 1");
         // BUG: conn is never disposed and ownership was never transferred.
-        // The analyzer should flag this.
     }
 
     // --- [MustDispose] on return value for non-annotated types ---

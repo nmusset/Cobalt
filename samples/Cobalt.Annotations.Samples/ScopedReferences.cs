@@ -71,7 +71,8 @@ public static class ScopedReferences
     {
         WithTemporaryBuffer(1024, buffer =>
         {
-            // BUG: storing a scoped reference — the analyzer should flag this.
+            // BUG: storing a scoped reference.
+            // Not yet detectable — requires [Scoped] escape analysis (future).
             // _leaked = buffer;
         });
     }

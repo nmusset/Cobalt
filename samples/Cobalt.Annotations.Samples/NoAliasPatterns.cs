@@ -69,7 +69,7 @@ public static class NoAliasPatterns
         var data = new int[] { 3, 1, 2 };
 
         // BUG: passing the same array as both [NoAlias] parameters.
-        // The analyzer should flag this.
+        // Not yet detectable — requires [NoAlias] aliasing analysis (future).
         // SwapContents(data, data);
     }
 }
