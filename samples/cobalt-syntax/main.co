@@ -1,0 +1,33 @@
+// Cobalt sample program — file processor pipeline.
+//
+// Demonstrates: top-level statements, ownership transfer, .NET interop,
+// match statement, using declarations.
+
+namespace Cobalt.Samples;
+
+use System;
+use System.IO;
+
+// Top-level statements — no Main method needed.
+// Compiled to a synthetic Program.Main in IL.
+
+var input = File.OpenRead("input.txt");
+var output = File.Create("output.txt");
+
+// 'own' at call site makes ownership transfer explicit.
+// After these calls, input and output are moved — they can't be used here.
+using var processor = FileProcessor.Create(own input, own output);
+
+// Each transform is created with 'new' and immediately moved into the processor.
+processor.AddTransform(own new UpperCaseTransform());
+processor.AddTransform(own new LineNumberTransform());
+
+// Run the pipeline and match on the result.
+var result = processor.Run();
+
+match (result)
+{
+    Success(var n) => Console.WriteLine($"Done: processed {n} lines"),
+    Error(var msg) => Console.WriteLine($"Error: {msg}"),
+    Skipped(var reason) => Console.WriteLine($"Skipped: {reason}"),
+};

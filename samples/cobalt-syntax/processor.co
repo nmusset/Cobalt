@@ -1,0 +1,84 @@
+// FileProcessor — owns its input/output streams and a list of transforms.
+//
+// Demonstrates: owned fields, ownership transfer via constructors and methods,
+// borrowing in iteration, Option<T> for null-free .NET interop, disposal.
+
+namespace Cobalt.Samples;
+
+use System;
+use System.IO;
+use System.Collections.Generic;
+
+class FileProcessor : IDisposable
+{
+    // Owned fields — this type is responsible for their lifetime.
+    own Stream _input;
+    own Stream _output;
+    own List<own ITransform> _transforms = new();
+
+    // Factory method: takes ownership of both streams, returns an owned processor.
+    public static own FileProcessor Create(own Stream input, own Stream output)
+    {
+        return new FileProcessor
+        {
+            _input = own input,
+            _output = own output,
+        };
+    }
+
+    // Takes ownership of the transform and stores it.
+    public void AddTransform(own ITransform transform)
+    {
+        // List.Add is an unannotated .NET method — the compiler accepts 'own'
+        // at the call site and marks the local as moved (implicit trust boundary).
+        _transforms.Add(own transform);
+    }
+
+    // Runs the pipeline. Borrows internal state (doesn't consume self).
+    public ProcessResult Run()
+    {
+        // .NET interop: StreamReader takes a regular parameter.
+        // No ownership modifiers at call sites for .NET methods.
+        var reader = new StreamReader(_input);
+        var lines = new List<string>();
+
+        // ReadLine returns Option<string> at the Cobalt boundary:
+        // .NET's nullable string is wrapped into Option automatically.
+        while (reader.ReadLine() is Some(var line))
+        {
+            lines.Add(line);
+        }
+
+        if (lines.Count == 0)
+        {
+            return Skipped("Input file is empty");
+        }
+
+        // Each transform borrows the lines list mutably.
+        // 'ref' in foreach = shared borrow of the transform itself.
+        foreach (ref transform in _transforms)
+        {
+            // The transform gets exclusive mutable access to lines.
+            // 'ref mut' at call site is required for mutable borrows.
+            transform.Apply(ref mut lines);
+        }
+
+        // Write results.
+        var writer = new StreamWriter(_output);
+        foreach (ref line in lines)
+        {
+            writer.WriteLine(line);
+        }
+        writer.Flush();
+
+        return Success(lines.Count);
+    }
+
+    // Dispose owned resources. Called automatically if the processor
+    // is declared with 'using var', or explicitly by the owner.
+    public void Dispose()
+    {
+        _input.Dispose();
+        _output.Dispose();
+    }
+}

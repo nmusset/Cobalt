@@ -1,0 +1,81 @@
+// Transforms — trait definition, implementations, and result union type.
+//
+// Demonstrates: traits, inline trait implementation, union types,
+// variant construction, pattern matching (switch expression),
+// free-standing functions.
+
+namespace Cobalt.Samples;
+
+use System.Collections.Generic;
+
+// --- Trait definition ---
+
+// 'trait' distinguishes Cobalt traits from .NET 'interface'.
+// Trait members are implicitly public (like C# interface members).
+// Cobalt traits support external impl blocks, and will eventually
+// support associated types and marker traits (Send, Sync).
+trait ITransform
+{
+    string Name { get; }
+    void Apply(ref mut List<string> lines);
+}
+
+// --- Inline trait implementations (C# style) ---
+
+class UpperCaseTransform : ITransform
+{
+    public string Name => "uppercase";
+
+    // Takes exclusive mutable borrow of the list — can modify in place.
+    public void Apply(ref mut List<string> lines)
+    {
+        for (var i = 0; i < lines.Count; i++)
+        {
+            lines[i] = lines[i].ToUpper();
+        }
+    }
+}
+
+class LineNumberTransform : ITransform
+{
+    public string Name => "line-numbers";
+
+    public void Apply(ref mut List<string> lines)
+    {
+        for (var i = 0; i < lines.Count; i++)
+        {
+            lines[i] = $"{i + 1}: {lines[i]}";
+        }
+    }
+}
+
+// --- Union type (algebraic data type) ---
+
+// 'union' keyword aligns with C# 15 proposal direction.
+// Compiled to a sealed class hierarchy in .NET IL.
+// Pattern matching on unions is exhaustive — the compiler
+// rejects a switch/match that doesn't cover all variants.
+union ProcessResult
+{
+    Success(int LinesProcessed),
+    Error(string Message),
+    Skipped(string Reason),
+}
+
+// Variant names (Success, Error, Skipped) are in scope when the
+// union type is in scope. If names conflict with other identifiers,
+// qualify with the union type: ProcessResult.Success(42).
+
+// --- Free-standing function ---
+
+// Module-level function — not inside a class.
+// Same syntax as a method. Compiled to a static method on a synthetic class in IL.
+string Summarize(ref ProcessResult result)
+{
+    return result switch
+    {
+        Success(var n) => $"Processed {n} lines",
+        Error(var msg) => $"Failed: {msg}",
+        Skipped(var reason) => $"Skipped: {reason}",
+    };
+}
