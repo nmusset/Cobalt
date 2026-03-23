@@ -44,4 +44,32 @@ internal static class DiagnosticDescriptors
         isEnabledByDefault: true,
         description: "A value that has been disposed must not be used again. " +
                      "Use a 'using' declaration or statement to ensure correct scoping.");
+
+    /// <summary>
+    /// CB0004: An owned value is assigned to another local, creating an alias. The source is considered moved.
+    /// </summary>
+    public static readonly DiagnosticDescriptor OwnedValueAliased = new(
+        id: "CB0004",
+        title: "Owned value aliased by assignment",
+        messageFormat: "Owned value '{0}' is aliased by assignment to '{1}'; the original is now moved",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Warning,
+        isEnabledByDefault: true,
+        description: "Assigning an owned value to another variable creates a second reference. " +
+                     "The original variable is considered moved and must not be used again. " +
+                     "Use .Clone() if both copies are needed.");
+
+    /// <summary>
+    /// CB0005: An owned value is passed to a parameter without a Cobalt ownership annotation.
+    /// </summary>
+    public static readonly DiagnosticDescriptor OwnedValueImplicitlyShared = new(
+        id: "CB0005",
+        title: "Owned value passed without ownership annotation",
+        messageFormat: "Owned value '{0}' is passed to unannotated parameter '{1}' — ownership semantics are unclear",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Info,
+        isEnabledByDefault: true,
+        description: "Passing an owned value to a parameter that lacks [Owned], [Borrowed], or [MutBorrowed] " +
+                     "means the callee might store or alias the value without the caller's knowledge. " +
+                     "Consider adding an ownership annotation to the target parameter.");
 }

@@ -333,4 +333,187 @@ public class OwnershipAnalyzerTests
         var test = AnalyzerTestHelper.CreateTest<OwnershipAnalyzer>(source);
         await test.RunAsync();
     }
+
+    // ---------------------------------------------------------------
+    // CB0004: Owned value aliased by assignment
+    // ---------------------------------------------------------------
+
+    [Fact]
+    public async Task OwnedValueAliased_ByDeclaration_Reports_CB0004()
+    {
+        var source = """
+            using System;
+            using Cobalt.Annotations;
+
+            [MustDispose]
+            class Res : IDisposable { public void Dispose() { } }
+
+            class C
+            {
+                void M()
+                {
+                    var a = new Res();
+                    var {|#0:b = a|}; // alias — a is now moved
+                    b.Dispose();
+                }
+            }
+            """;
+
+        var test = AnalyzerTestHelper.CreateTest<OwnershipAnalyzer>(
+            source,
+            Diagnostic("CB0004").WithLocation(0).WithArguments("a", "b"));
+
+        await test.RunAsync();
+    }
+
+    [Fact]
+    public async Task OwnedValueAliased_ByAssignment_Reports_CB0004()
+    {
+        var source = """
+            using System;
+            using Cobalt.Annotations;
+
+            [MustDispose]
+            class Res : IDisposable { public void Dispose() { } }
+
+            class C
+            {
+                void M()
+                {
+                    var a = new Res();
+                    Res b;
+                    {|#0:b = a|}; // alias — a is now moved
+                    b.Dispose();
+                }
+            }
+            """;
+
+        var test = AnalyzerTestHelper.CreateTest<OwnershipAnalyzer>(
+            source,
+            Diagnostic("CB0004").WithLocation(0).WithArguments("a", "b"));
+
+        await test.RunAsync();
+    }
+
+    [Fact]
+    public async Task OwnedValueAliased_ThenUseOriginal_Reports_CB0004_And_CB0002()
+    {
+        var source = """
+            using System;
+            using Cobalt.Annotations;
+
+            [MustDispose]
+            class Res : IDisposable
+            {
+                public void Dispose() { }
+                public void Use() { }
+            }
+
+            class C
+            {
+                void M()
+                {
+                    var a = new Res();
+                    var {|#0:b = a|}; // alias — a is now moved
+                    {|#1:a|}.Use();    // use after move
+                    b.Dispose();
+                }
+            }
+            """;
+
+        var test = AnalyzerTestHelper.CreateTest<OwnershipAnalyzer>(
+            source,
+            Diagnostic("CB0004").WithLocation(0).WithArguments("a", "b"),
+            Diagnostic("CB0002").WithLocation(1).WithArguments("a"));
+
+        await test.RunAsync();
+    }
+
+    // ---------------------------------------------------------------
+    // CB0005: Owned value passed without ownership annotation
+    // ---------------------------------------------------------------
+
+    [Fact]
+    public async Task OwnedValuePassedToUnannotated_Reports_CB0005()
+    {
+        var source = """
+            using System;
+            using Cobalt.Annotations;
+
+            [MustDispose]
+            class Res : IDisposable { public void Dispose() { } }
+
+            class C
+            {
+                void M()
+                {
+                    var r = new Res();
+                    Log({|#0:r|});
+                    r.Dispose();
+                }
+
+                void Log(object obj) { }
+            }
+            """;
+
+        var test = AnalyzerTestHelper.CreateTest<OwnershipAnalyzer>(
+            source,
+            new DiagnosticResult("CB0005", Microsoft.CodeAnalysis.DiagnosticSeverity.Info)
+                .WithLocation(0).WithArguments("r", "obj"));
+
+        await test.RunAsync();
+    }
+
+    [Fact]
+    public async Task OwnedValuePassedToBorrowed_NoDiagnostic()
+    {
+        var source = """
+            using System;
+            using Cobalt.Annotations;
+
+            [MustDispose]
+            class Res : IDisposable { public void Dispose() { } }
+
+            class C
+            {
+                void M()
+                {
+                    var r = new Res();
+                    Inspect(r);
+                    r.Dispose();
+                }
+
+                void Inspect([Borrowed] Res r) { }
+            }
+            """;
+
+        var test = AnalyzerTestHelper.CreateTest<OwnershipAnalyzer>(source);
+        await test.RunAsync();
+    }
+
+    [Fact]
+    public async Task OwnedValuePassedToOwned_NoCB0005()
+    {
+        var source = """
+            using System;
+            using Cobalt.Annotations;
+
+            [MustDispose]
+            class Res : IDisposable { public void Dispose() { } }
+
+            class C
+            {
+                void M()
+                {
+                    var r = new Res();
+                    Consume(r); // ownership transfer — CB0005 should not fire
+                }
+
+                void Consume([Owned] Res r) { r.Dispose(); }
+            }
+            """;
+
+        var test = AnalyzerTestHelper.CreateTest<OwnershipAnalyzer>(source);
+        await test.RunAsync();
+    }
 }

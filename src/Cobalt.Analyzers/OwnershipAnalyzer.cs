@@ -12,7 +12,9 @@ public sealed class OwnershipAnalyzer : DiagnosticAnalyzer
         ImmutableArray.Create(
             DiagnosticDescriptors.OwnedNotDisposed,
             DiagnosticDescriptors.UseAfterMove,
-            DiagnosticDescriptors.UseAfterDispose);
+            DiagnosticDescriptors.UseAfterDispose,
+            DiagnosticDescriptors.OwnedValueAliased,
+            DiagnosticDescriptors.OwnedValueImplicitlyShared);
 
     public override void Initialize(AnalysisContext context)
     {
@@ -59,12 +61,19 @@ public sealed class OwnershipAnalyzer : DiagnosticAnalyzer
     {
         public INamedTypeSymbol Owned { get; }
         public INamedTypeSymbol MustDispose { get; }
+        public INamedTypeSymbol? Borrowed { get; }
+        public INamedTypeSymbol? MutBorrowed { get; }
         public INamedTypeSymbol? IDisposable { get; }
 
-        private KnownTypes(INamedTypeSymbol owned, INamedTypeSymbol mustDispose, INamedTypeSymbol? idisposable)
+        private KnownTypes(
+            INamedTypeSymbol owned, INamedTypeSymbol mustDispose,
+            INamedTypeSymbol? borrowed, INamedTypeSymbol? mutBorrowed,
+            INamedTypeSymbol? idisposable)
         {
             Owned = owned;
             MustDispose = mustDispose;
+            Borrowed = borrowed;
+            MutBorrowed = mutBorrowed;
             IDisposable = idisposable;
         }
 
@@ -76,12 +85,22 @@ public sealed class OwnershipAnalyzer : DiagnosticAnalyzer
             // At least [Owned] or [MustDispose] must be available.
             if (owned is null && mustDispose is null) return null;
 
-            var idisposable = compilation.GetTypeByMetadataName("System.IDisposable");
-
             return new KnownTypes(
-                owned!,       // At least one is non-null.
-                mustDispose!, // Both can be used in the tracker with null checks.
-                idisposable);
+                owned!,
+                mustDispose!,
+                compilation.GetTypeByMetadataName(AttributeNames.Borrowed),
+                compilation.GetTypeByMetadataName(AttributeNames.MutBorrowed),
+                compilation.GetTypeByMetadataName("System.IDisposable"));
+        }
+
+        /// <summary>
+        /// Checks whether a parameter has any Cobalt ownership annotation.
+        /// </summary>
+        public bool HasAnyOwnershipAnnotation(IParameterSymbol param)
+        {
+            return param.HasAttribute(Owned)
+                   || param.HasAttribute(Borrowed)
+                   || param.HasAttribute(MutBorrowed);
         }
     }
 
@@ -137,6 +156,26 @@ public sealed class OwnershipAnalyzer : DiagnosticAnalyzer
 
             if (initializer is null) return;
 
+            // CB0004: If the initializer is a reference to an already-tracked owned variable,
+            // this is aliasing — the source is moved.
+            var unwrapped = UnwrapConversions(initializer);
+            if (GetReferencedSymbol(unwrapped) is { } source && _states.ContainsKey(source) && _states[source] == VariableState.Active)
+            {
+                context.ReportDiagnostic(Diagnostic.Create(
+                    DiagnosticDescriptors.OwnedValueAliased,
+                    declarator.Syntax.GetLocation(),
+                    source.Name, local.Name));
+
+                _states[source] = VariableState.Transferred;
+                _stateChangeLocations[source] = declarator.Syntax.GetLocation();
+
+                // The new variable inherits the owned status.
+                var state = IsInsideUsing(declarator) ? VariableState.InUsing : VariableState.Active;
+                _states[local] = state;
+                _declarationLocations[local] = local.Locations.FirstOrDefault() ?? declarator.Syntax.GetLocation();
+                return;
+            }
+
             if (IsOwnedValue(initializer, local.Type))
             {
                 // Check if this declarator is inside a using statement or using declaration.
@@ -152,6 +191,24 @@ public sealed class OwnershipAnalyzer : DiagnosticAnalyzer
 
             if (assignment.Target is ILocalReferenceOperation localRef)
             {
+                // CB0004: Assigning a tracked owned variable to another local is aliasing.
+                var unwrapped = UnwrapConversions(assignment.Value);
+                if (GetReferencedSymbol(unwrapped) is { } aliasSource
+                    && _states.ContainsKey(aliasSource) && _states[aliasSource] == VariableState.Active)
+                {
+                    context.ReportDiagnostic(Diagnostic.Create(
+                        DiagnosticDescriptors.OwnedValueAliased,
+                        assignment.Syntax.GetLocation(),
+                        aliasSource.Name, localRef.Local.Name));
+
+                    _states[aliasSource] = VariableState.Transferred;
+                    _stateChangeLocations[aliasSource] = assignment.Syntax.GetLocation();
+
+                    _states[localRef.Local] = VariableState.Active;
+                    _declarationLocations[localRef.Local] = assignment.Syntax.GetLocation();
+                    return;
+                }
+
                 if (IsOwnedValue(assignment.Value, localRef.Local.Type))
                 {
                     _states[localRef.Local] = VariableState.Active;
@@ -159,8 +216,7 @@ public sealed class OwnershipAnalyzer : DiagnosticAnalyzer
                 }
             }
 
-            // Assignment to a field (including [Owned] fields) transfers ownership
-            // from the source variable.
+            // Assignment to a field transfers ownership from the source variable.
             if (assignment.Target is IFieldReferenceOperation)
             {
                 if (GetReferencedSymbol(assignment.Value) is { } source && _states.ContainsKey(source))
@@ -186,21 +242,28 @@ public sealed class OwnershipAnalyzer : DiagnosticAnalyzer
                 return;
             }
 
-            // Check for ownership transfer via [Owned] parameters.
-            // Any variable passed to an [Owned] parameter is considered moved,
-            // even if it wasn't previously tracked (enables use-after-move detection).
+            // Check each argument for ownership transfer or implicit sharing.
             foreach (var argument in invocation.Arguments)
             {
                 var param = argument.Parameter;
                 if (param is null) continue;
 
+                if (GetReferencedSymbol(argument.Value) is not { } referenced) continue;
+
                 if (param.HasAttribute(_known.Owned))
                 {
-                    if (GetReferencedSymbol(argument.Value) is { } transferred)
-                    {
-                        _states[transferred] = VariableState.Transferred;
-                        _stateChangeLocations[transferred] = argument.Syntax.GetLocation();
-                    }
+                    // Ownership transfer via [Owned] parameter — source is moved.
+                    _states[referenced] = VariableState.Transferred;
+                    _stateChangeLocations[referenced] = argument.Syntax.GetLocation();
+                }
+                else if (_states.ContainsKey(referenced) && _states[referenced] == VariableState.Active
+                         && !_known.HasAnyOwnershipAnnotation(param))
+                {
+                    // CB0005: Owned value passed to unannotated parameter.
+                    context.ReportDiagnostic(Diagnostic.Create(
+                        DiagnosticDescriptors.OwnedValueImplicitlyShared,
+                        argument.Syntax.GetLocation(),
+                        referenced.Name, param.Name));
                 }
             }
         }
@@ -378,8 +441,13 @@ public sealed class OwnershipAnalyzer : DiagnosticAnalyzer
                         return true;
 
                     case ISimpleAssignmentOperation assignment:
-                        // The reference is the source value of a field assignment — this is the transfer itself.
-                        return assignment.Target is IFieldReferenceOperation;
+                        // The reference is the source value of a field or local assignment — this is the transfer/alias itself.
+                        return assignment.Target is IFieldReferenceOperation or ILocalReferenceOperation;
+
+                    case IVariableInitializerOperation:
+                    case IVariableDeclaratorOperation:
+                        // The reference is the initializer of a variable declaration (e.g. var b = a).
+                        return true;
 
                     case IConversionOperation:
                     case IParenthesizedOperation:
@@ -456,6 +524,13 @@ public sealed class OwnershipAnalyzer : DiagnosticAnalyzer
             return invocation.TargetMethod.Name == "Dispose"
                    && invocation.Arguments.Length == 0
                    && invocation.Instance is not null;
+        }
+
+        private static IOperation UnwrapConversions(IOperation operation)
+        {
+            while (operation is IConversionOperation conversion)
+                operation = conversion.Operand;
+            return operation;
         }
 
         private static ISymbol? GetReferencedSymbol(IOperation? operation)
