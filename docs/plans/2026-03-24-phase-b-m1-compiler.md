@@ -6,7 +6,7 @@
 
 **Architecture:** The compiler follows a classic pipeline: source text → lexer → parser → AST → semantic analysis (type checking + borrow checking) → IL emission. Each stage is a separate project/namespace with clear interfaces. The compiler is a .NET console app (`cobaltc`) that reads `.co` files and produces `.dll`/`.exe` assemblies with Portable PDB debug info.
 
-**Tech Stack:** .NET 9, C#, Mono.Cecil (IL emission), xUnit (testing), hand-written recursive-descent parser.
+**Tech Stack:** .NET 10, C#, Mono.Cecil (IL emission), xUnit (testing), hand-written recursive-descent parser.
 
 **Spec:** `docs/specs/2026-03-23-cobalt-syntax-design.md`
 **Roadmap:** `docs/implementation-roadmap.md` (sections B.1–B.7)
@@ -54,6 +54,10 @@ src/
       Diagnostic.cs                 — Unified diagnostic type (error/warning/info)
       DiagnosticBag.cs              — Diagnostic collection
       SourceLocation.cs             — Source file + line + column
+    Dump/
+      AstDumper.cs                  — Pretty-prints AST to text/JSON
+      SymbolDumper.cs               — Dumps symbol table and resolved types
+      OwnershipDumper.cs            — Dumps ownership states per variable
     Driver/
       Compilation.cs                — Orchestrates the full pipeline
   Cobalt.Compiler.Cli/
@@ -95,14 +99,14 @@ tests/
 - [ ] **Step 1: Create the Cobalt.Compiler class library**
 
 ```bash
-dotnet new classlib -n Cobalt.Compiler -o src/Cobalt.Compiler --framework net9.0
+dotnet new classlib -n Cobalt.Compiler -o src/Cobalt.Compiler --framework net10.0
 rm src/Cobalt.Compiler/Class1.cs
 ```
 
 - [ ] **Step 2: Create the Cobalt.Compiler.Cli console app**
 
 ```bash
-dotnet new console -n Cobalt.Compiler.Cli -o src/Cobalt.Compiler.Cli --framework net9.0
+dotnet new console -n Cobalt.Compiler.Cli -o src/Cobalt.Compiler.Cli --framework net10.0
 ```
 
 Add project reference to `Cobalt.Compiler`.
@@ -110,14 +114,14 @@ Add project reference to `Cobalt.Compiler`.
 - [ ] **Step 3: Create the Cobalt.Stdlib class library**
 
 ```bash
-dotnet new classlib -n Cobalt.Stdlib -o src/Cobalt.Stdlib --framework net9.0
+dotnet new classlib -n Cobalt.Stdlib -o src/Cobalt.Stdlib --framework net10.0
 rm src/Cobalt.Stdlib/Class1.cs
 ```
 
 - [ ] **Step 4: Create the test project**
 
 ```bash
-dotnet new xunit -n Cobalt.Compiler.Tests -o tests/Cobalt.Compiler.Tests --framework net9.0
+dotnet new xunit -n Cobalt.Compiler.Tests -o tests/Cobalt.Compiler.Tests --framework net10.0
 rm tests/Cobalt.Compiler.Tests/UnitTest1.cs
 ```
 
@@ -940,7 +944,138 @@ git commit -m "Add ownership tracking and borrow checker"
 
 ---
 
-## Task 8: Core Standard Library
+## Task 8: IR Dump Infrastructure
+
+**Files:**
+- Create: `src/Cobalt.Compiler/Dump/AstDumper.cs`
+- Create: `src/Cobalt.Compiler/Dump/SymbolDumper.cs`
+- Create: `src/Cobalt.Compiler/Dump/OwnershipDumper.cs`
+
+Diagnostic and learning tooling: dump intermediate representations to text or JSON files. The CLI exposes `--dump-ast`, `--dump-symbols`, and `--dump-ownership` flags that write `.ast.json`, `.symbols.json`, and `.ownership.txt` files alongside the output. These are invaluable for debugging the compiler and understanding how Cobalt code is analyzed.
+
+- [ ] **Step 1: Implement AstDumper**
+
+Pretty-prints the parsed AST as indented text or JSON. Shows the full tree structure with node types, source spans, and ownership modifiers.
+
+```csharp
+// AstDumper.cs
+namespace Cobalt.Compiler.Dump;
+
+public sealed class AstDumper
+{
+    public static string DumpText(CompilationUnit unit) { ... }   // indented tree view
+    public static string DumpJson(CompilationUnit unit) { ... }   // JSON for tooling
+
+    private static void WriteNode(StringBuilder sb, SyntaxNode node, int indent) { ... }
+}
+```
+
+Example output (text mode):
+```
+CompilationUnit
+  Namespace: Cobalt.Samples
+  Use: System
+  Use: System.IO
+  ClassDeclaration: FileProcessor
+    Field: _input (own Stream)
+    Field: _output (own Stream)
+    Method: Create (static, returns own FileProcessor)
+      Parameter: input (own Stream)
+      Parameter: output (own Stream)
+      Body:
+        ReturnStatement
+          ObjectCreation: FileProcessor
+            Initializer: _input = own input
+            Initializer: _output = own output
+```
+
+- [ ] **Step 2: Implement SymbolDumper**
+
+Dumps the symbol table after type checking: all types, their members, resolved trait implementations, and union variants.
+
+```csharp
+// SymbolDumper.cs
+namespace Cobalt.Compiler.Dump;
+
+public sealed class SymbolDumper
+{
+    public static string DumpText(SymbolTable symbols) { ... }
+    public static string DumpJson(SymbolTable symbols) { ... }
+}
+```
+
+Example output (text mode):
+```
+Type: FileProcessor (Class)
+  Implements: IDisposable
+  Fields:
+    _input: Stream [own]
+    _output: Stream [own]
+    _transforms: List<ITransform> [own, elements: own]
+  Methods:
+    Create(own Stream, own Stream) -> own FileProcessor [static]
+    AddTransform(own ITransform) -> void
+    Run() -> ProcessResult
+    Dispose() -> void
+
+Type: ProcessResult (Union)
+  Variants:
+    Success(int LinesProcessed)
+    Error(string Message)
+    Skipped(string Reason)
+
+Trait: ITransform
+  Members:
+    Name: string { get; }
+    Apply(ref mut List<string>) -> void
+```
+
+- [ ] **Step 3: Implement OwnershipDumper**
+
+Dumps per-method ownership analysis: variable states at each statement, borrow regions, move points, and any diagnostics raised.
+
+```csharp
+// OwnershipDumper.cs
+namespace Cobalt.Compiler.Dump;
+
+public sealed class OwnershipDumper
+{
+    public static string DumpText(CompilationUnit unit, OwnershipTracker tracker) { ... }
+}
+```
+
+Example output:
+```
+Method: FileProcessor.Create
+  [line 22] var input: Active (own Stream)
+  [line 23] var output: Active (own Stream)
+  [line 25] _input = own input → input: Moved
+  [line 26] _output = own output → output: Moved
+  [end] all variables moved or disposed ✓
+
+Method: Main (top-level)
+  [line 15] var input: Active (own Stream)
+  [line 16] var output: Active (own Stream)
+  [line 19] FileProcessor.Create(own input, own output) → input: Moved, output: Moved
+  [line 22] processor.AddTransform(own ...) → temporary: Moved
+  [end] processor: disposed via using ✓
+```
+
+- [ ] **Step 4: Build and verify**
+
+```bash
+dotnet build src/Cobalt.Compiler/Cobalt.Compiler.csproj
+```
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/Cobalt.Compiler/Dump/ && git commit -m "Add IR dump infrastructure (AST, symbols, ownership)"
+```
+
+---
+
+## Task 9: Core Standard Library
 
 **Files:**
 - Create: `src/Cobalt.Stdlib/Option.cs`
@@ -1005,14 +1140,14 @@ git add src/Cobalt.Stdlib/ && git commit -m "Add Cobalt stdlib: Option<T> and Re
 
 ---
 
-## Task 9: Type-Level IL Emission
+## Task 10: Type-Level IL Emission
 
 **Files:**
 - Create: `src/Cobalt.Compiler/Emit/ILEmitter.cs`
 - Create: `src/Cobalt.Compiler/Emit/TypeEmitter.cs`
 - Create: `tests/Cobalt.Compiler.Tests/Emit/ILEmitterTests.cs`
 
-Type-level IL emission: creates type definitions, fields, method signatures, and trait-to-interface mappings using Mono.Cecil. Method bodies are implemented in Task 10.
+Type-level IL emission: creates type definitions, fields, method signatures, and trait-to-interface mappings using Mono.Cecil. Method bodies are implemented in Task 11.
 
 - [ ] **Step 1: Implement TypeEmitter**
 
@@ -1103,7 +1238,7 @@ git commit -m "Add type-level IL emission (classes, traits, unions, properties)"
 
 ---
 
-## Task 10: Method Body IL Emission
+## Task 11: Method Body IL Emission
 
 **Files:**
 - Create: `src/Cobalt.Compiler/Emit/MethodEmitter.cs`
@@ -1188,7 +1323,7 @@ git commit -m "Add method body IL emission (statements, expressions, control flo
 
 ---
 
-## Task 11: Compilation Driver
+## Task 12: Compilation Driver
 
 **Files:**
 - Create: `src/Cobalt.Compiler/Driver/Compilation.cs`
@@ -1204,6 +1339,11 @@ namespace Cobalt.Compiler.Driver;
 public sealed class Compilation
 {
     public DiagnosticBag Diagnostics { get; } = new();
+
+    // Intermediate state — populated during compilation, accessible for dump tools
+    public CompilationUnit? Ast { get; private set; }
+    public SymbolTable? Symbols { get; private set; }
+    public object? OwnershipReport { get; private set; }  // typed properly during implementation
 
     public bool Compile(string[] sourceFiles, string outputPath)
     {
@@ -1238,7 +1378,7 @@ git add src/Cobalt.Compiler/Driver/ && git commit -m "Add compilation driver orc
 
 ---
 
-## Task 12: CLI Entry Point (`cobaltc`)
+## Task 13: CLI Entry Point (`cobaltc`)
 
 **Files:**
 - Modify: `src/Cobalt.Compiler.Cli/Program.cs`
@@ -1255,18 +1395,42 @@ public static class Program
     {
         if (args.Length == 0)
         {
-            Console.Error.WriteLine("Usage: cobaltc <source-files...> [-o output.dll]");
+            Console.Error.WriteLine("Usage: cobaltc <source-files...> [-o output.dll] [--dump-ast] [--dump-symbols] [--dump-ownership]");
             return 1;
         }
 
-        var sourceFiles = args.Where(a => !a.StartsWith('-')).ToArray();
+        var sourceFiles = args.Where(a => !a.StartsWith('-') && a.EndsWith(".co")).ToArray();
         var outputIndex = Array.IndexOf(args, "-o");
         var outputPath = outputIndex >= 0 && outputIndex + 1 < args.Length
             ? args[outputIndex + 1]
             : Path.ChangeExtension(sourceFiles[0], ".dll");
 
+        var dumpAst = args.Contains("--dump-ast");
+        var dumpSymbols = args.Contains("--dump-symbols");
+        var dumpOwnership = args.Contains("--dump-ownership");
+
         var compilation = new Compilation();
         var success = compilation.Compile(sourceFiles, outputPath);
+
+        // Dump intermediate representations if requested
+        if (dumpAst && compilation.Ast != null)
+        {
+            var astPath = Path.ChangeExtension(outputPath, ".ast.json");
+            File.WriteAllText(astPath, AstDumper.DumpJson(compilation.Ast));
+            Console.WriteLine($"AST dumped to: {astPath}");
+        }
+        if (dumpSymbols && compilation.Symbols != null)
+        {
+            var symPath = Path.ChangeExtension(outputPath, ".symbols.txt");
+            File.WriteAllText(symPath, SymbolDumper.DumpText(compilation.Symbols));
+            Console.WriteLine($"Symbols dumped to: {symPath}");
+        }
+        if (dumpOwnership && compilation.OwnershipReport != null)
+        {
+            var ownPath = Path.ChangeExtension(outputPath, ".ownership.txt");
+            File.WriteAllText(ownPath, OwnershipDumper.DumpText(compilation.OwnershipReport));
+            Console.WriteLine($"Ownership analysis dumped to: {ownPath}");
+        }
 
         foreach (var diagnostic in compilation.Diagnostics.All)
         {
@@ -1301,7 +1465,7 @@ git add src/Cobalt.Compiler.Cli/ && git commit -m "Add cobaltc CLI entry point"
 
 ---
 
-## Task 13: Integration Tests with Sample Program
+## Task 14: Integration Tests with Sample Program
 
 **Files:**
 - Create: `tests/Cobalt.Compiler.Tests/Integration/SampleProgramTests.cs`
@@ -1386,7 +1550,7 @@ git add tests/Cobalt.Compiler.Tests/Integration/ && git commit -m "Add integrati
 
 ---
 
-## Task 14: Update Roadmap and Documentation
+## Task 15: Update Roadmap and Documentation
 
 **Files:**
 - Modify: `docs/implementation-roadmap.md`
