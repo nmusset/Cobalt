@@ -1219,4 +1219,112 @@ public class ParserTests
         }
         throw new InvalidOperationException("Could not find repository root");
     }
+
+    // ──────────────────────────────────────────────
+    // Parser robustness — former infinite loop / crash scenarios
+    // ──────────────────────────────────────────────
+
+    [Fact]
+    public void Parse_TraitWithPublicMethod_DoesNotHang()
+    {
+        var unit = Parse("""
+            trait Converter
+            {
+                public string Convert(int value);
+            }
+            """);
+        var trait = Assert.IsType<TraitDeclaration>(unit.Members[0]);
+        var method = Assert.IsType<MethodDeclaration>(trait.Members[0]);
+        Assert.Equal("Convert", method.Name);
+        Assert.Equal(AccessModifier.Public, method.Access);
+        Assert.Single(method.Parameters);
+        Assert.Equal("value", method.Parameters[0].Name);
+    }
+
+    [Fact]
+    public void Parse_TraitWithPublicProperty_DoesNotHang()
+    {
+        var unit = Parse("""
+            trait HasName
+            {
+                public string Name { get; }
+            }
+            """);
+        var trait = Assert.IsType<TraitDeclaration>(unit.Members[0]);
+        var prop = Assert.IsType<PropertyDeclaration>(trait.Members[0]);
+        Assert.Equal("Name", prop.Name);
+        Assert.True(prop.HasGetter);
+    }
+
+    [Fact]
+    public void Parse_TraitWithMultipleModifiedMembers_ParsesAll()
+    {
+        var unit = Parse("""
+            trait Disposable
+            {
+                public void Dispose();
+                public bool IsDisposed { get; }
+            }
+            """);
+        var trait = Assert.IsType<TraitDeclaration>(unit.Members[0]);
+        Assert.Equal(2, trait.Members.Count);
+        Assert.IsType<MethodDeclaration>(trait.Members[0]);
+        Assert.IsType<PropertyDeclaration>(trait.Members[1]);
+    }
+
+    [Fact]
+    public void Parse_MatchArmWithBlockBody_ParsesBlock()
+    {
+        var unit = Parse("""
+            class Foo
+            {
+                public void Test(int x)
+                {
+                    match (x)
+                    {
+                        var n => {
+                            var y = 1;
+                            return;
+                        },
+                    };
+                }
+            }
+            """);
+        var cls = Assert.IsType<ClassDeclaration>(unit.Members[0]);
+        var method = Assert.IsType<MethodDeclaration>(cls.Members[0]);
+        Assert.NotNull(method.Body);
+    }
+
+    [Fact]
+    public void Parse_SynchronizeAdvancesPastBadTokensInClassBody()
+    {
+        // Gibberish in a class body should not hang — Synchronize advances past it
+        var (unit, diag) = ParseWithDiagnostics("""
+            class Foo
+            {
+                !!!
+                public int x;
+            }
+            """);
+        // Should have errors but not hang
+        Assert.True(diag.HasErrors);
+        var cls = Assert.IsType<ClassDeclaration>(unit.Members[0]);
+        // The valid field should still be parsed after recovery
+        Assert.Contains(cls.Members, m => m is FieldDeclaration f && f.Name == "x");
+    }
+
+    [Fact]
+    public void Parse_SynchronizeAdvancesPastBadTokensInTraitBody()
+    {
+        var (unit, diag) = ParseWithDiagnostics("""
+            trait Foo
+            {
+                !!!
+                public void Run();
+            }
+            """);
+        Assert.True(diag.HasErrors);
+        var trait = Assert.IsType<TraitDeclaration>(unit.Members[0]);
+        Assert.Contains(trait.Members, m => m is MethodDeclaration md && md.Name == "Run");
+    }
 }

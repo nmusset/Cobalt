@@ -75,6 +75,11 @@ public sealed class Parser
 
     private void Synchronize()
     {
+        // Always advance at least one token to guarantee progress.
+        // Without this, callers in a loop can get stuck when the current
+        // token is a declaration/statement start that the parser doesn't understand.
+        Advance();
+
         while (Current.Kind != TokenKind.EndOfFile)
         {
             // Stop at synchronization points
@@ -595,10 +600,17 @@ public sealed class Parser
 
     private SyntaxNode? ParseTraitMember()
     {
+        var access = AccessModifier.None;
+        bool isStatic = false, isSealed = false, isAbstract = false;
+        bool isOverride = false, isVirtual = false;
+        var memberStart = Current.Span;
+
+        ParseModifiers(ref access, ref isStatic, ref isSealed, ref isAbstract,
+            ref isOverride, ref isVirtual);
+
         if (!IsTypeStart() && Current.Kind != TokenKind.Identifier)
             return null;
 
-        var memberStart = Current.Span;
         var returnOwnership = ParseOwnershipModifier();
         var type = ParseTypeSyntax();
 
@@ -607,20 +619,20 @@ public sealed class Parser
         // Method signature: Type Name(...);
         if (Current.Kind == TokenKind.OpenParen)
         {
-            return ParseMethodRest(name, AccessModifier.None, false, false,
-                false, false, type, returnOwnership, memberStart);
+            return ParseMethodRest(name, access, isStatic, isAbstract,
+                isOverride, isVirtual, type, returnOwnership, memberStart);
         }
 
         // Property signature: Type Name { get; }
         if (Current.Kind == TokenKind.OpenBrace && LooksLikePropertyBody())
         {
-            return ParsePropertyRest(name, AccessModifier.None, type, memberStart);
+            return ParsePropertyRest(name, access, type, memberStart);
         }
 
         // Expression-bodied property: Type Name => expr;
         if (Current.Kind == TokenKind.FatArrow)
         {
-            return ParseExpressionBodiedProperty(name, AccessModifier.None, type, memberStart);
+            return ParseExpressionBodiedProperty(name, access, type, memberStart);
         }
 
         return null;
@@ -1045,8 +1057,10 @@ public sealed class Parser
         var start = Current.Span;
         var pattern = ParsePattern();
         Expect(TokenKind.FatArrow);
-        // Body can be an expression (possibly including method calls)
-        var body = (SyntaxNode)ParseExpression();
+        // Body can be a block statement or an expression
+        SyntaxNode body = Current.Kind == TokenKind.OpenBrace
+            ? ParseBlock()
+            : ParseExpression();
         return new MatchArm(pattern, body, MakeSpan(start, Current.Span));
     }
 
@@ -1136,6 +1150,7 @@ public sealed class Parser
 
         _diagnostics.Error(ParseDiagnosticIds.ExpectedExpression,
             $"Expected pattern but found '{Current.Text}'", Current.Span);
+        Advance(); // consume the unexpected token to guarantee progress
         return new DiscardPattern(MakeSpan(start, Current.Span));
     }
 
