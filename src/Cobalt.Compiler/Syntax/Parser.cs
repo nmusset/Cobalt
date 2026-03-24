@@ -984,7 +984,18 @@ public sealed class Parser
         Expect(TokenKind.OpenParen);
 
         var ownership = ParseOwnershipModifier();
-        var varName = ExpectIdentifier().Text;
+
+        // Handle 'var' keyword as loop variable pattern (foreach (var item in ...))
+        string varName;
+        if (Check(TokenKind.Var))
+        {
+            Advance();
+            varName = ExpectIdentifier().Text;
+        }
+        else
+        {
+            varName = ExpectIdentifier().Text;
+        }
 
         Expect(TokenKind.In);
         var iterable = ParseExpression();

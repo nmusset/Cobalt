@@ -772,9 +772,27 @@ public class TypeChecker
     private TypeSymbol CheckIdentifier(IdentifierExpression ident, Scope scope)
     {
         var symbol = scope.Lookup(ident.Name);
+
+        // If not in scope, check current type's members (fields, properties, methods)
+        if (symbol == null && _currentType != null)
+        {
+            foreach (var field in _currentType.Fields)
+            {
+                if (field.Name == ident.Name)
+                    return field.Type;
+            }
+            foreach (var prop in _currentType.Properties)
+            {
+                if (prop.Name == ident.Name)
+                    return prop.Type;
+            }
+            var method = FindMethodOnType(_currentType, ident.Name);
+            if (method != null)
+                return method.ReturnType;
+        }
+
         if (symbol == null)
         {
-            // Check if it's a type name (for static member access)
             _diagnostics.Error(SemanticDiagnosticIds.UndefinedName,
                 $"Name '{ident.Name}' is not defined", ident.Span);
             return BuiltInTypes.Error;
@@ -885,8 +903,36 @@ public class TypeChecker
                 // Constructor call: TypeName(args)
                 return type;
             }
+            if (symbol is UnionVariantSymbol variant)
+            {
+                // Variant constructor call: VariantName(args)
+                return variant.ContainingUnion;
+            }
             if (symbol == null)
             {
+                // Check current type's methods (for calling sibling methods by bare name)
+                if (_currentType != null)
+                {
+                    var typeMethod = FindMethodOnType(_currentType, ident.Name);
+                    if (typeMethod != null)
+                    {
+                        if (typeMethod.Parameters.Count != invoke.Arguments.Count)
+                        {
+                            _diagnostics.Error(SemanticDiagnosticIds.WrongArgumentCount,
+                                $"Method '{typeMethod.Name}' expects {typeMethod.Parameters.Count} argument(s) but got {invoke.Arguments.Count}",
+                                invoke.Span);
+                        }
+                        return typeMethod.ReturnType;
+                    }
+                }
+
+                // Check if it's a union variant constructor
+                var variantSymbol = _globalScope.Lookup(ident.Name);
+                if (variantSymbol is UnionVariantSymbol)
+                {
+                    return (variantSymbol as UnionVariantSymbol)!.ContainingUnion;
+                }
+
                 _diagnostics.Error(SemanticDiagnosticIds.UndefinedName,
                     $"Name '{ident.Name}' is not defined", ident.Span);
                 return BuiltInTypes.Error;
