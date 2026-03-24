@@ -1,0 +1,125 @@
+using Cobalt.Compiler.Diagnostics;
+
+namespace Cobalt.Compiler.Syntax;
+
+public enum TokenKind
+{
+    // Literals
+    IntLiteral,
+    FloatLiteral,
+    StringLiteral,
+    InterpolatedStringStart,
+    InterpolatedStringEnd,
+    InterpolatedStringText,
+    CharLiteral,
+
+    // Identifiers
+    Identifier,
+
+    // Cobalt keywords
+    Own,
+    Ref,
+    Mut,
+    Trait,
+    Impl,
+    Union,
+    Match,
+    Use,
+
+    // C# shared keywords
+    Namespace,
+    Class,
+    Struct,
+    Interface,
+    Enum,
+    Public,
+    Private,
+    Protected,
+    Internal,
+    Static,
+    Sealed,
+    Void,
+    Return,
+    If,
+    Else,
+    While,
+    For,
+    Foreach,
+    In,
+    Var,
+    New,
+    Using,
+    Is,
+    This,
+    Null,
+    True,
+    False,
+    Break,
+    Continue,
+    Throw,
+    Try,
+    Catch,
+    Finally,
+    Get,
+    Set,
+    Abstract,
+    Override,
+    Virtual,
+
+    // Reserved (not used yet)
+    Fn,
+    Async,
+    Await,
+    Send,
+    Sync,
+
+    // Operators
+    Plus,
+    Minus,
+    Star,
+    Slash,
+    Percent,
+    Equals,
+    EqualsEquals,
+    BangEquals,
+    Less,
+    LessEquals,
+    Greater,
+    GreaterEquals,
+    Ampersand,
+    AmpersandAmpersand,
+    Pipe,
+    PipePipe,
+    Bang,
+    Tilde,
+    Caret,
+    PlusPlus,
+    MinusMinus,
+    PlusEquals,
+    MinusEquals,
+    StarEquals,
+    SlashEquals,
+
+    // Punctuation
+    Dot,
+    Comma,
+    Semicolon,
+    Colon,
+    ColonColon,
+    OpenParen,
+    CloseParen,
+    OpenBrace,
+    CloseBrace,
+    OpenBracket,
+    CloseBracket,
+    FatArrow,
+    Arrow,
+    QuestionMark,
+    QuestionDot,
+
+    // Special
+    EndOfFile,
+    Bad,
+}
+
+public readonly record struct Token(TokenKind Kind, string Text, SourceSpan Span, object? Value = null);
