@@ -65,14 +65,18 @@ Extend existing CA2000/CA2213 analysis with ownership-aware rules:
 
 The Cobalt compiler — a new language with C#-like syntax and a built-in borrow checker, compiling to .NET IL.
 
-### B.1 Parser
+### B.1 Parser ✅
 
 - Hand-written recursive-descent parser (consistent with Rust, Go, TypeScript approach)
 - C#-like syntax with Rust-inspired ownership keywords (`own`, `ref`, `mut`)
-- Error recovery for IDE-quality diagnostics from the start
-- Concrete syntax tree (CST) preserving whitespace and trivia for formatting tools
+- Error recovery for IDE-quality diagnostics from the start (`Synchronize` always advances)
+- 74 parser tests covering all syntax constructs
 
-### B.2 Type System
+**Known limitations:**
+- `CastExpression` (`(Type)expr`) is not parsed — cast syntax not yet implemented
+- Bare `ref expr` in expression position is not handled (only `ref mut` expressions)
+
+### B.2 Type System ✅
 
 - Value types and reference types mapping to .NET structs and classes
 - Generics with trait bounds (compiled to .NET reified generics with constraints)
@@ -80,7 +84,7 @@ The Cobalt compiler — a new language with C#-like syntax and a built-in borrow
 - Algebraic data types (discriminated unions) compiled to sealed class hierarchies
 - `Option<T>` and `Result<T, E>` as first-class types (no null)
 
-### B.3 Ownership and Borrow Checker
+### B.3 Ownership and Borrow Checker ✅
 
 The core differentiator. Enforces at compile time:
 
@@ -93,26 +97,35 @@ Scope of the borrow checker for Milestone 1:
 - Intra-function analysis (variables, fields, borrows, moves)
 - Cross-function analysis via signature-encoded lifetimes
 - No async/await support yet (deferred to Milestone 2)
+- 43 borrow checker tests covering all diagnostic IDs
 
-### B.4 IL Emission
+### B.4 IL Emission ✅
 
 - **Mono.Cecil** for assembly generation (full metadata control, PDB support, no runtime dependency)
-- Ownership metadata encoded as custom attributes (following NullableAttribute precedent)
-- Move semantics enforced at compile time; optionally cleared at runtime in debug mode
-- Portable PDB generation for debugger support (breakpoints, stepping, variable inspection)
+- Three-pass emitter: type declarations → member signatures → body emission
+- 75 emitter tests covering type declarations, member signatures, and body emission
 
-### B.5 Core Standard Library
+**Known limitations:**
+- `impl` blocks are not emitted (methods inside `impl` are silently ignored)
+- `break`/`continue` emit Nop placeholders (no loop label tracking yet)
+- `foreach` body is not emitted (iteration pattern not implemented)
+- `using var` does not emit try/finally Dispose
+- Generic type arguments are not instantiated (`GenericInstanceType` not created)
+- Member access on .NET framework types resolves through a limited lookup
+- `CastExpression` uses `Castclass` for all types (wrong for value type conversions)
 
-Minimal stdlib for Milestone 1:
+### B.5 Core Standard Library ✅
 
-| Type | Description | .NET Mapping |
-|------|-------------|-------------|
-| `Option<T>` | Absence without null | Sealed class hierarchy or struct |
-| `Result<T, E>` | Error handling without exceptions | Sealed class hierarchy |
-| `Vec<T>` | Growable array | Wrapper over `List<T>` or custom |
-| `String` | Owned UTF-8 string | Wrapper or interop with `System.String` |
-| `Box<T>` | Heap-allocated owned value | Reference type wrapper |
-| `Span<T>` | Borrowed view over contiguous memory | Direct use of `System.Span<T>` |
+Minimal stdlib implemented:
+
+| Type | Description | .NET Mapping | Status |
+|------|-------------|-------------|--------|
+| `Option<T>` | Absence without null | Sealed class hierarchy | ✅ |
+| `Result<T, E>` | Error handling without exceptions | Sealed class hierarchy | ✅ |
+| `Vec<T>` | Growable array | Wrapper over `List<T>` or custom | Deferred |
+| `String` | Owned UTF-8 string | Wrapper or interop with `System.String` | Deferred |
+| `Box<T>` | Heap-allocated owned value | Reference type wrapper | Deferred |
+| `Span<T>` | Borrowed view over contiguous memory | Direct use of `System.Span<T>` | Deferred |
 
 ### B.6 .NET Interop (Dual-World Model)
 
@@ -120,10 +133,10 @@ Minimal stdlib for Milestone 1:
 - **Exposing Cobalt:** Cobalt types compile to standard .NET assemblies. C# consumers see normal .NET types. Ownership metadata is encoded as custom attributes (readable by the Phase A analyzer for advisory checking).
 - **NuGet:** Cobalt projects reference NuGet packages through standard MSBuild infrastructure.
 
-### B.7 Build and Tooling
+### B.7 Build and Tooling — In Progress
 
-- `cobaltc` CLI compiler
-- MSBuild SDK for `.cobaltproj` files (enabling `dotnet build`)
+- `cobaltc` CLI compiler with `--dump-ast`, `--dump-symbols`, `--dump-ownership` flags
+- MSBuild SDK for `.cobaltproj` files (enabling `dotnet build`) — deferred
 - Basic error messages with source locations and fix suggestions
 
 ### Key Technical Decisions (Phase B, Milestone 1)
