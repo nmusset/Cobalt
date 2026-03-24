@@ -13,8 +13,8 @@ An additional goal is seamless interop with both Rust and C#/.NET ecosystems.
 ## Current State
 
 Research phase complete. The project is now in early implementation, following `docs/implementation-roadmap.md`:
-- **Phase A** (current): Roslyn analyzer with ownership annotations
-- **Phase B, Milestone 1** (next): Core language compiler
+- **Phase A** (complete): Roslyn analyzer with ownership annotations
+- **Phase B, Milestone 1** (current): Core language compiler
 
 ## Repository Structure
 

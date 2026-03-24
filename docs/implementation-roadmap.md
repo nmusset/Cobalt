@@ -6,7 +6,7 @@ The MVP scope covers Phase A (analyzer) and Phase B Milestone 1 (core language c
 
 ---
 
-## Phase A: Roslyn Analyzer — Ownership Stepping Stone
+## Phase A: Roslyn Analyzer — Ownership Stepping Stone ✅
 
 A Roslyn analyzer package that brings ownership-aware static analysis to standard C# code. This phase validates the ownership model against real .NET patterns, builds community, and generates design feedback before committing to a full compiler.
 
@@ -44,7 +44,7 @@ Extend existing CA2000/CA2213 analysis with ownership-aware rules:
 - Warn when a `[NotSync]` type is captured by a lambda passed to `Task.Run` or `Parallel.ForEach`
 - Advisory only — cannot enforce at compile time, but catches a class of bugs .NET has no defense against
 
-### A.5 Deliverable
+### A.5 Deliverable ✅
 
 - `Cobalt.Analyzers` NuGet package (analyzer + code fixes)
 - Opt-in per-project via NuGet reference
