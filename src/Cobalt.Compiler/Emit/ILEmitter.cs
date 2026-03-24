@@ -434,7 +434,18 @@ public sealed class ILEmitter
 
         // Ensure method ends with ret (may already have one from an early return)
         if (!EndsWithRet(pending.Method))
+        {
+            // For non-void methods, push a default value so the stack isn't empty
+            var retType = pending.Method.ReturnType;
+            if (retType.FullName != "System.Void")
+            {
+                if (retType.IsValueType)
+                    EmitDefaultValue(il, retType);
+                else
+                    il.Emit(OpCodes.Ldnull);
+            }
             il.Emit(OpCodes.Ret);
+        }
     }
 
     private void EmitBlock(BlockStatement block, BodyContext ctx)
@@ -735,6 +746,35 @@ public sealed class ILEmitter
     private TypeReference? EmitBinary(BinaryExpression bin, BodyContext ctx)
     {
         var il = ctx.IL;
+
+        // Short-circuit operators must not eagerly evaluate right side
+        if (bin.Operator == TokenKind.AmpersandAmpersand)
+        {
+            var falseLabel = il.Create(OpCodes.Nop);
+            var endLabel = il.Create(OpCodes.Nop);
+            EmitExpression(bin.Left, ctx);
+            il.Emit(OpCodes.Brfalse, falseLabel);
+            EmitExpression(bin.Right, ctx);
+            il.Emit(OpCodes.Br, endLabel);
+            il.Append(falseLabel);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Append(endLabel);
+            return _module.TypeSystem.Boolean;
+        }
+        if (bin.Operator == TokenKind.PipePipe)
+        {
+            var trueLabel = il.Create(OpCodes.Nop);
+            var endLabel = il.Create(OpCodes.Nop);
+            EmitExpression(bin.Left, ctx);
+            il.Emit(OpCodes.Brtrue, trueLabel);
+            EmitExpression(bin.Right, ctx);
+            il.Emit(OpCodes.Br, endLabel);
+            il.Append(trueLabel);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Append(endLabel);
+            return _module.TypeSystem.Boolean;
+        }
+
         EmitExpression(bin.Left, ctx);
         EmitExpression(bin.Right, ctx);
         switch (bin.Operator)
@@ -750,8 +790,6 @@ public sealed class ILEmitter
             case TokenKind.Greater: il.Emit(OpCodes.Cgt); return _module.TypeSystem.Boolean;
             case TokenKind.LessEquals: il.Emit(OpCodes.Cgt); il.Emit(OpCodes.Ldc_I4_0); il.Emit(OpCodes.Ceq); return _module.TypeSystem.Boolean;
             case TokenKind.GreaterEquals: il.Emit(OpCodes.Clt); il.Emit(OpCodes.Ldc_I4_0); il.Emit(OpCodes.Ceq); return _module.TypeSystem.Boolean;
-            case TokenKind.AmpersandAmpersand: il.Emit(OpCodes.And); return _module.TypeSystem.Boolean;
-            case TokenKind.PipePipe: il.Emit(OpCodes.Or); return _module.TypeSystem.Boolean;
             default:
                 il.Emit(OpCodes.Pop); il.Emit(OpCodes.Pop);
                 il.Emit(OpCodes.Ldnull);
@@ -900,29 +938,31 @@ public sealed class ILEmitter
                 .Where(m => m.Name == ".ctor" && m.Parameters.Count == objCreate.Arguments.Count)
                 .FirstOrDefault();
 
-            if (ctor != null)
-            {
-                foreach (var arg in objCreate.Arguments)
-                    EmitExpression(arg.Expression, ctx);
-                il.Emit(OpCodes.Newobj, ctor);
-                return typeDef;
-            }
+            // Fall back to default constructor
+            ctor ??= typeDef.Methods.FirstOrDefault(m => m.Name == ".ctor" && m.Parameters.Count == 0);
 
-            // Default constructor
-            ctor = typeDef.Methods.FirstOrDefault(m => m.Name == ".ctor" && m.Parameters.Count == 0);
             if (ctor != null)
             {
-                foreach (var arg in objCreate.Arguments)
+                if (ctor.Parameters.Count == objCreate.Arguments.Count)
                 {
-                    EmitExpression(arg.Expression, ctx);
-                    il.Emit(OpCodes.Pop);
+                    foreach (var arg in objCreate.Arguments)
+                        EmitExpression(arg.Expression, ctx);
                 }
+                else
+                {
+                    // Arg count mismatch — evaluate and discard
+                    foreach (var arg in objCreate.Arguments)
+                    {
+                        EmitExpression(arg.Expression, ctx);
+                        il.Emit(OpCodes.Pop);
+                    }
+                }
+
                 il.Emit(OpCodes.Newobj, ctor);
 
                 // Handle object initializers
-                if (objCreate.InitializerClauses != null)
+                if (objCreate.InitializerClauses is { Count: > 0 })
                 {
-                    // Store in a temp local, set fields, push back
                     var tmpLocal = new VariableDefinition(typeDef);
                     ctx.Method.Body.Variables.Add(tmpLocal);
                     il.Emit(OpCodes.Stloc, tmpLocal);
@@ -951,13 +991,14 @@ public sealed class ILEmitter
     private TypeReference? EmitAssignment(AssignmentExpression assign, BodyContext ctx)
     {
         var il = ctx.IL;
-        EmitExpression(assign.Value, ctx);
 
         if (assign.Target is IdentifierExpression ident)
         {
+            EmitExpression(assign.Value, ctx);
+
             if (ctx.Locals.TryGetValue(ident.Name, out var local))
             {
-                il.Emit(OpCodes.Dup); // keep value on stack (assignment is an expression)
+                il.Emit(OpCodes.Dup);
                 il.Emit(OpCodes.Stloc, local);
                 return local.VariableType;
             }
@@ -989,6 +1030,50 @@ public sealed class ILEmitter
                 }
             }
         }
+        else if (assign.Target is MemberAccessExpression memberAccess)
+        {
+            // obj.field = value → emit obj, emit value, stfld
+            var targetType = EmitExpression(memberAccess.Target, ctx) as TypeDefinition;
+            EmitExpression(assign.Value, ctx);
+
+            // Try the emitted type, then look up identifier name in type defs
+            targetType ??= memberAccess.Target is IdentifierExpression id
+                && _typeDefs.TryGetValue(id.Name, out var td) ? td : null;
+
+            // Try resolving parameter type → look up in _typeDefs
+            if (targetType == null && memberAccess.Target is IdentifierExpression id2)
+            {
+                var paramOffset = ctx.Method.IsStatic ? 0 : 1;
+                for (int i = 0; i < ctx.ParamNames.Count; i++)
+                {
+                    if (ctx.ParamNames[i] == id2.Name)
+                    {
+                        var paramTypeName = ctx.Method.Parameters[i].ParameterType.Name;
+                        _typeDefs.TryGetValue(paramTypeName, out targetType);
+                        break;
+                    }
+                }
+            }
+
+            if (targetType != null)
+            {
+                var field = targetType.Fields.FirstOrDefault(f => f.Name == memberAccess.MemberName);
+                if (field != null)
+                {
+                    il.Emit(OpCodes.Stfld, field);
+                    return field.FieldType;
+                }
+            }
+
+            // Unknown member — pop both target and value
+            il.Emit(OpCodes.Pop);
+            il.Emit(OpCodes.Pop);
+            return _module.TypeSystem.Object;
+        }
+        else
+        {
+            EmitExpression(assign.Value, ctx);
+        }
 
         return _module.TypeSystem.Object;
     }
@@ -1017,7 +1102,9 @@ public sealed class ILEmitter
                 var t = EmitExpression(ins.Expression, ctx);
                 if (t != null && t != _module.TypeSystem.String)
                 {
-                    // Call ToString()
+                    // Box value types before calling ToString
+                    if (t.IsValueType)
+                        il.Emit(OpCodes.Box, t);
                     var toStringMethod = new MethodReference("ToString", _module.TypeSystem.String, _module.TypeSystem.Object)
                     {
                         HasThis = true
@@ -1028,12 +1115,8 @@ public sealed class ILEmitter
             }
         }
 
-        // Use String.Concat(string[]) for multiple parts
-        if (concatArgs.Count == 1)
-        {
-            // Already a string
-        }
-        else if (concatArgs.Count == 2)
+        // Chain pairwise String.Concat(string, string) calls
+        for (int i = 1; i < concatArgs.Count; i++)
         {
             var concatMethod = new MethodReference("Concat", _module.TypeSystem.String,
                 new TypeReference("System", "String", _module, _module.TypeSystem.CoreLibrary))
@@ -1043,27 +1126,6 @@ public sealed class ILEmitter
             concatMethod.Parameters.Add(new ParameterDefinition(_module.TypeSystem.String));
             concatMethod.Parameters.Add(new ParameterDefinition(_module.TypeSystem.String));
             il.Emit(OpCodes.Call, concatMethod);
-        }
-        else
-        {
-            // Fall back to creating a string array and calling String.Concat(string[])
-            // For simplicity, just call ToString on everything and concat pairs
-            // The stack already has multiple strings — we need to combine them
-            // For MVP, emit a simple result
-            for (int i = 1; i < concatArgs.Count; i++)
-            {
-                var concatMethod = new MethodReference("Concat", _module.TypeSystem.String,
-                    new TypeReference("System", "String", _module, _module.TypeSystem.CoreLibrary))
-                {
-                    HasThis = false
-                };
-                concatMethod.Parameters.Add(new ParameterDefinition(_module.TypeSystem.String));
-                concatMethod.Parameters.Add(new ParameterDefinition(_module.TypeSystem.String));
-                // This won't work for >2 in one pass, but handles the common case
-            }
-            // For now, pop all but the last
-            for (int i = 0; i < concatArgs.Count - 1; i++)
-                il.Emit(OpCodes.Pop);
         }
 
         return _module.TypeSystem.String;
@@ -1185,15 +1247,46 @@ public sealed class ILEmitter
 
     private static void EmitNotImplementedBody(MethodDefinition method)
     {
+        var il = method.Body.GetILProcessor();
         if (method.ReturnType.FullName == "System.Void")
         {
-            method.Body.GetILProcessor().Emit(OpCodes.Ret);
+            il.Emit(OpCodes.Ret);
+        }
+        else if (method.ReturnType.IsValueType)
+        {
+            // Push default value for value types
+            EmitDefaultValue(il, method.ReturnType);
+            il.Emit(OpCodes.Ret);
         }
         else
         {
-            var il = method.Body.GetILProcessor();
             il.Emit(OpCodes.Ldnull);
             il.Emit(OpCodes.Ret);
+        }
+    }
+
+    private static void EmitDefaultValue(ILProcessor il, TypeReference type)
+    {
+        switch (type.FullName)
+        {
+            case "System.Int32":
+            case "System.Boolean":
+            case "System.Char":
+                il.Emit(OpCodes.Ldc_I4_0);
+                break;
+            case "System.Int64":
+                il.Emit(OpCodes.Ldc_I8, 0L);
+                break;
+            case "System.Single":
+                il.Emit(OpCodes.Ldc_R4, 0f);
+                break;
+            case "System.Double":
+                il.Emit(OpCodes.Ldc_R8, 0.0);
+                break;
+            default:
+                // Generic value type — use initobj via a local
+                il.Emit(OpCodes.Ldc_I4_0);
+                break;
         }
     }
 
