@@ -7,4 +7,8 @@
     <Project Path="Cobalt.Analyzers/Cobalt.Analyzers.csproj" />
     <Project Path="Cobalt.Annotations/Cobalt.Annotations.csproj" />
   </Folder>
+  <Project Path="Cobalt.Compiler/Cobalt.Compiler.csproj" />
+  <Project Path="Cobalt.Compiler.Cli/Cobalt.Compiler.Cli.csproj" />
+  <Project Path="Cobalt.Compiler.Tests/Cobalt.Compiler.Tests.csproj" />
+  <Project Path="Cobalt.Stdlib/Cobalt.Stdlib.csproj" />
 </Solution>
