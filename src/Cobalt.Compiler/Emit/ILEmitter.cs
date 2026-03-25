@@ -762,6 +762,103 @@ public sealed class ILEmitter
         il.Append(endLabel);
     }
 
+    private TypeReference? EmitSwitch(SwitchExpression switchExpr, BodyContext ctx)
+    {
+        var il = ctx.IL;
+        var endLabel = il.Create(OpCodes.Nop);
+
+        // Evaluate subject and store in a temp local
+        var subjectType = EmitExpression(switchExpr.Subject, ctx) ?? _module.TypeSystem.Object;
+        var subjectLocal = new VariableDefinition(subjectType);
+        ctx.Method.Body.Variables.Add(subjectLocal);
+        il.Emit(OpCodes.Stloc, subjectLocal);
+
+        TypeReference? resultType = null;
+
+        foreach (var arm in switchExpr.Arms)
+        {
+            switch (arm.Pattern)
+            {
+                case VariantPattern variant:
+                {
+                    var variantType = FindVariantType(variant.VariantName);
+                    if (variantType == null)
+                    {
+                        il.Emit(OpCodes.Nop);
+                        break;
+                    }
+
+                    var nextArmLabel = il.Create(OpCodes.Nop);
+
+                    // Type test: isinst + brfalse
+                    il.Emit(OpCodes.Ldloc, subjectLocal);
+                    il.Emit(OpCodes.Isinst, variantType);
+                    il.Emit(OpCodes.Brfalse, nextArmLabel);
+
+                    // Cast and extract fields for sub-patterns
+                    il.Emit(OpCodes.Ldloc, subjectLocal);
+                    il.Emit(OpCodes.Castclass, variantType);
+
+                    var castedLocal = new VariableDefinition(variantType);
+                    ctx.Method.Body.Variables.Add(castedLocal);
+                    il.Emit(OpCodes.Stloc, castedLocal);
+
+                    // Bind sub-pattern variables to fields
+                    var fields = variantType.Fields;
+                    for (int i = 0; i < variant.SubPatterns.Count && i < fields.Count; i++)
+                    {
+                        if (variant.SubPatterns[i] is VarPattern vp)
+                        {
+                            il.Emit(OpCodes.Ldloc, castedLocal);
+                            il.Emit(OpCodes.Ldfld, fields[i]);
+                            var fieldLocal = new VariableDefinition(fields[i].FieldType);
+                            ctx.Method.Body.Variables.Add(fieldLocal);
+                            ctx.Locals[vp.VariableName] = fieldLocal;
+                            il.Emit(OpCodes.Stloc, fieldLocal);
+                        }
+                        // DiscardPattern — no binding needed
+                    }
+
+                    resultType = EmitExpression(arm.Expression, ctx);
+                    il.Emit(OpCodes.Br, endLabel);
+                    il.Append(nextArmLabel);
+                    break;
+                }
+
+                case VarPattern varPat:
+                {
+                    // Catch-all: bind subject to local, no type test
+                    var catchAllLocal = new VariableDefinition(subjectType);
+                    ctx.Method.Body.Variables.Add(catchAllLocal);
+                    ctx.Locals[varPat.VariableName] = catchAllLocal;
+                    il.Emit(OpCodes.Ldloc, subjectLocal);
+                    il.Emit(OpCodes.Stloc, catchAllLocal);
+
+                    resultType = EmitExpression(arm.Expression, ctx);
+                    il.Emit(OpCodes.Br, endLabel);
+                    break;
+                }
+
+                case DiscardPattern:
+                {
+                    // Wildcard: emit expression unconditionally
+                    resultType = EmitExpression(arm.Expression, ctx);
+                    il.Emit(OpCodes.Br, endLabel);
+                    break;
+                }
+            }
+        }
+
+        // Safety-net: throw new InvalidOperationException("No matching pattern")
+        il.Emit(OpCodes.Ldstr, "No matching pattern");
+        il.Emit(OpCodes.Newobj, ImportInvalidOperationExceptionCtor());
+        il.Emit(OpCodes.Throw);
+
+        il.Append(endLabel);
+
+        return resultType;
+    }
+
     private void EmitArmBody(SyntaxNode body, BodyContext ctx)
     {
         if (body is StatementNode stmt)
@@ -842,10 +939,8 @@ public sealed class ILEmitter
                 il.Emit(OpCodes.Ldc_I4_1);
                 return _module.TypeSystem.Boolean;
 
-            case SwitchExpression:
-                // Switch expression — emit null as placeholder
-                il.Emit(OpCodes.Ldnull);
-                return _module.TypeSystem.Object;
+            case SwitchExpression switchExpr:
+                return EmitSwitch(switchExpr, ctx);
 
             case InterpolatedStringExpression interp:
                 return EmitInterpolatedString(interp, ctx);

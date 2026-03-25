@@ -125,4 +125,35 @@ public class ILEmitterMatchTests
         Assert.True(HasOpCode(method, OpCodes.Isinst));
         Assert.True(HasOpCode(method, OpCodes.Ldfld));  // field extraction
     }
+
+    // ══════════════════════════════════════════════
+    // Switch expression tests
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public void Emit_SwitchExpression_EmitsIsinstAndReturnsValue()
+    {
+        var asm = Emit("""
+            union Color
+            {
+                Red(),
+                Blue(),
+            }
+            public class Describer
+            {
+                public string Describe(Color c)
+                {
+                    var name = c switch
+                    {
+                        Red() => "red",
+                        Blue() => "blue",
+                    };
+                    return name;
+                }
+            }
+            """);
+        var method = GetMethod(GetType(asm, "Describer"), "Describe");
+        Assert.True(HasOpCode(method, OpCodes.Isinst));
+        Assert.True(HasOpCode(method, OpCodes.Ldstr));
+    }
 }
