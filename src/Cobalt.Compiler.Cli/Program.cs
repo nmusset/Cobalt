@@ -126,6 +126,18 @@ foreach (var d in compilation.Diagnostics.All)
 
 if (success)
 {
+    // Copy Cobalt.Annotations.dll alongside output for runtime attribute access
+    var annotationsPath = Path.Combine(AppContext.BaseDirectory, "Cobalt.Annotations.dll");
+    if (File.Exists(annotationsPath))
+    {
+        var targetDir = Path.GetDirectoryName(outputPath);
+        if (!string.IsNullOrEmpty(targetDir))
+        {
+            var targetPath = Path.Combine(targetDir, "Cobalt.Annotations.dll");
+            if (!File.Exists(targetPath))
+                File.Copy(annotationsPath, targetPath);
+        }
+    }
     Console.WriteLine($"Compiled successfully: {outputPath}");
     return 0;
 }

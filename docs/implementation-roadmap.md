@@ -133,11 +133,13 @@ Minimal stdlib implemented:
 - **Exposing Cobalt:** Cobalt types compile to standard .NET assemblies. C# consumers see normal .NET types. Ownership metadata is encoded as custom attributes (readable by the Phase A analyzer for advisory checking).
 - **NuGet:** Cobalt projects reference NuGet packages through standard MSBuild infrastructure.
 
-### B.7 Build and Tooling — In Progress
+### B.7 Build and Tooling ✅
 
-- `cobaltc` CLI compiler with `--dump-ast`, `--dump-symbols`, `--dump-ownership` flags
-- MSBuild SDK for `.cobaltproj` files (enabling `dotnet build`) — deferred
-- Basic error messages with source locations and fix suggestions
+- `cobaltc` CLI compiler with `--dump-ast`, `--dump-symbols`, `--dump-all`, `-o` flags
+- Multi-file compilation with AST merging
+- Entry point generation for top-level statements
+- MSBuild SDK for `.cobaltproj` files (enabling `dotnet build`) — deferred to M3
+- Basic error messages with source locations
 
 ### Key Technical Decisions (Phase B, Milestone 1)
 
@@ -151,12 +153,47 @@ Minimal stdlib implemented:
 
 ---
 
-## What Comes After the MVP
+## Phase B, Milestone 2: Make It Run ✅
 
-These are scoped out of the MVP but documented here for context. See the [decision document](decision/01-approach-decision.md) Section 4 for details.
+Made the compiler produce assemblies that actually execute on .NET, with ownership metadata preserved.
 
-- **Milestone 2 — Ecosystem Integration:** LSP server, query-based incremental analysis, async/await with Send/Sync bounds, pattern matching, external BCL annotation overlays
-- **Milestone 3 — Production Readiness:** Rust FFI with ownership-tracked wrappers, performance optimizations (stack allocation, copy elision), bootstrapping, comprehensive diagnostics
+**Spec:** `docs/specs/2026-03-25-phase-b-m2-make-it-run.md`
+**Plan:** `docs/plans/2026-03-25-phase-b-m2-make-it-run.md`
+
+### Completed
+
+- Match statement emission with union variant dispatch (`isinst`/`castclass` + pattern variable binding)
+- Switch expression emission (same dispatch, returns a value)
+- Foreach body emission (IEnumerator pattern: GetEnumerator/MoveNext/Current)
+- Break/continue with loop label stack
+- Using-var disposal with try/finally and null-check
+- Impl block emission (interface addition + method bodies)
+- Union variant constructor chaining (base class ctor, not Object)
+- Entry point generation for top-level statements (synthetic Program.Main)
+- Ownership attribute emission (`[Owned]`, `[Borrowed]`, `[MutBorrowed]` from Cobalt.Annotations)
+- Showcase sample (`showcase.co`) demonstrating all Cobalt-specific features
+- Integration tests (5 tests: compile hello.co, compile showcase.co, ownership attributes, match emission, use-after-move error)
+- 386 total tests passing
+
+---
+
+## Phase B, Milestone 3: Production MVP (Backlog)
+
+Items deferred from M2. No detailed plan yet — will be designed when M2 is validated.
+
+- Lifetime validation in borrow checker
+- Generic type instantiation (`GenericInstanceType`)
+- Cast expression parsing and emission
+- Pattern match exhaustiveness checking
+- Cross-assembly borrow checking (consuming Cobalt from Cobalt)
+- Embedded compiler-synthesized attributes (replace Phase A `Cobalt.Annotations` dependency)
+- Three-file pipeline compilation (`main.co` + `processor.co` + `transforms.co`)
+- Foreach enumerator disposal (try/finally around IEnumerator)
+- Async/await support
+- LSP server for IDE integration
+- MSBuild SDK for `.cobaltproj` files
+- Rust FFI with ownership-tracked wrappers
+- Performance optimizations (stack allocation, copy elision)
 
 ---
 

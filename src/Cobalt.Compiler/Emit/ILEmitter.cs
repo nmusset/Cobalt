@@ -8,7 +8,7 @@ using Cobalt.Compiler.Syntax;
 // ──────────────────────────────────────────────
 // IL Emitter — Cobalt AST → .NET IL (via Mono.Cecil)
 //
-// Two-pass design:
+// Three-pass design:
 //   Pass 1 (DeclareTypes)  — create empty TypeDefinitions for every Cobalt type
 //   Pass 2 (EmitMembers)   — add fields, methods and constructors with signatures
 //   Pass 3 (EmitBodies)    — emit IL into method/constructor bodies
