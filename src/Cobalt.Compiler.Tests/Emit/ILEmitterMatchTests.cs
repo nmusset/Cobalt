@@ -67,7 +67,7 @@ public class ILEmitterMatchTests
             """);
         var method = GetMethod(GetType(asm, "Matcher"), "Area");
         Assert.True(HasOpCode(method, OpCodes.Isinst));
-        Assert.True(HasOpCode(method, OpCodes.Castclass));
+        Assert.False(HasOpCode(method, OpCodes.Castclass)); // isinst returns cast result directly
         Assert.True(HasOpCode(method, OpCodes.Throw));  // safety-net
     }
 

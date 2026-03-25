@@ -858,18 +858,15 @@ public sealed class ILEmitter
 
                     var nextArmLabel = il.Create(OpCodes.Nop);
 
-                    // Type test: isinst + brfalse
-                    il.Emit(OpCodes.Ldloc, subjectLocal);
-                    il.Emit(OpCodes.Isinst, variantType);
-                    il.Emit(OpCodes.Brfalse, nextArmLabel);
-
-                    // Cast and extract fields for sub-patterns
-                    il.Emit(OpCodes.Ldloc, subjectLocal);
-                    il.Emit(OpCodes.Castclass, variantType);
-
+                    // isinst returns the cast result directly (null if no match),
+                    // so we store it and branch — no separate castclass needed.
                     var castedLocal = new VariableDefinition(variantType);
                     ctx.Method.Body.Variables.Add(castedLocal);
+                    il.Emit(OpCodes.Ldloc, subjectLocal);
+                    il.Emit(OpCodes.Isinst, variantType);
                     il.Emit(OpCodes.Stloc, castedLocal);
+                    il.Emit(OpCodes.Ldloc, castedLocal);
+                    il.Emit(OpCodes.Brfalse, nextArmLabel);
 
                     // Bind sub-pattern variables to fields
                     var fields = variantType.Fields;
@@ -953,18 +950,15 @@ public sealed class ILEmitter
 
                     var nextArmLabel = il.Create(OpCodes.Nop);
 
-                    // Type test: isinst + brfalse
-                    il.Emit(OpCodes.Ldloc, subjectLocal);
-                    il.Emit(OpCodes.Isinst, variantType);
-                    il.Emit(OpCodes.Brfalse, nextArmLabel);
-
-                    // Cast and extract fields for sub-patterns
-                    il.Emit(OpCodes.Ldloc, subjectLocal);
-                    il.Emit(OpCodes.Castclass, variantType);
-
+                    // isinst returns the cast result directly (null if no match),
+                    // so we store it and branch — no separate castclass needed.
                     var castedLocal = new VariableDefinition(variantType);
                     ctx.Method.Body.Variables.Add(castedLocal);
+                    il.Emit(OpCodes.Ldloc, subjectLocal);
+                    il.Emit(OpCodes.Isinst, variantType);
                     il.Emit(OpCodes.Stloc, castedLocal);
+                    il.Emit(OpCodes.Ldloc, castedLocal);
+                    il.Emit(OpCodes.Brfalse, nextArmLabel);
 
                     // Bind sub-pattern variables to fields
                     var fields = variantType.Fields;
