@@ -80,6 +80,14 @@ public sealed class ILEmitter
             case UnionDeclaration union:
                 DeclareUnion(union);
                 break;
+            case ImplBlock impl:
+                if (_typeDefs.TryGetValue(impl.TargetTypeName, out var targetType)
+                    && _typeDefs.TryGetValue(impl.TraitName, out var traitType))
+                {
+                    if (!targetType.Interfaces.Any(i => i.InterfaceType.Name == traitType.Name))
+                        targetType.Interfaces.Add(new InterfaceImplementation(traitType));
+                }
+                break;
             case MethodDeclaration:
                 EnsureTopLevelClass();
                 break;
@@ -169,6 +177,21 @@ public sealed class ILEmitter
                 break;
             case UnionDeclaration union when _typeDefs.TryGetValue(union.Name, out var typeDef):
                 EmitUnionSignatures(union, typeDef);
+                break;
+            case ImplBlock impl:
+                if (_typeDefs.TryGetValue(impl.TargetTypeName, out var implTarget))
+                {
+                    foreach (var m in impl.Members)
+                    {
+                        if (m is MethodDeclaration method2)
+                        {
+                            EmitMethodSignature(method2, implTarget);
+                            var methodDef = implTarget.Methods.Last();
+                            methodDef.Attributes = MethodAttributes.Public | MethodAttributes.Virtual
+                                | MethodAttributes.Final | MethodAttributes.HideBySig | MethodAttributes.NewSlot;
+                        }
+                    }
+                }
                 break;
             case MethodDeclaration method:
                 EnsureTopLevelClass();
