@@ -62,7 +62,8 @@ public sealed class Compilation
         // 5. Emit IL (proceed even with warnings, stop only on errors)
         if (Diagnostics.HasErrors) return false;
 
-        var emitter = new ILEmitter(assemblyName, new Version(1, 0, 0, 0), GlobalScope);
+        var hasEntryPoint = HasTopLevelStatements(Ast);
+        var emitter = new ILEmitter(assemblyName, new Version(1, 0, 0, 0), GlobalScope, hasEntryPoint);
         Assembly = emitter.Emit(Ast);
 
         // 6. Write assembly to disk
@@ -132,6 +133,11 @@ public sealed class Compilation
     // ──────────────────────────────────────────────
     // Internals
     // ──────────────────────────────────────────────
+
+    private static bool HasTopLevelStatements(CompilationUnit unit)
+    {
+        return unit.Members.OfType<StatementNode>().Any();
+    }
 
     private static CompilationUnit MergeUnits(List<CompilationUnit> units)
     {

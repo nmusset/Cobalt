@@ -36,11 +36,12 @@ public sealed class ILEmitter
     // Public API
     // ──────────────────────────────────────────────
 
-    public ILEmitter(string assemblyName, Version version, Scope globalScope)
+    public ILEmitter(string assemblyName, Version version, Scope globalScope, bool hasEntryPoint = false)
     {
         _globalScope = globalScope;
         var asmName = new AssemblyNameDefinition(assemblyName, version);
-        var assembly = AssemblyDefinition.CreateAssembly(asmName, assemblyName + ".dll", ModuleKind.Dll);
+        var kind = hasEntryPoint ? ModuleKind.Console : ModuleKind.Dll;
+        var assembly = AssemblyDefinition.CreateAssembly(asmName, assemblyName + ".dll", kind);
         _module = assembly.MainModule;
     }
 
@@ -59,6 +60,36 @@ public sealed class ILEmitter
         // Pass 3 — emit method bodies
         foreach (var pending in _pendingBodies)
             EmitBody(pending);
+
+        // Emit top-level statements into a synthetic Program.Main entry point
+        var topLevelStatements = unit.Members.OfType<StatementNode>().ToList();
+        if (topLevelStatements.Count > 0)
+        {
+            var programType = new TypeDefinition(_namespace, "Program",
+                TypeAttributes.Class | TypeAttributes.Sealed | TypeAttributes.BeforeFieldInit,
+                _module.TypeSystem.Object);
+            _module.Types.Add(programType);
+
+            var mainMethod = new MethodDefinition("Main",
+                MethodAttributes.Public | MethodAttributes.Static | MethodAttributes.HideBySig,
+                _module.TypeSystem.Void);
+            mainMethod.Parameters.Add(new ParameterDefinition("args",
+                ParameterAttributes.None,
+                new ArrayType(_module.TypeSystem.String)));
+            programType.Methods.Add(mainMethod);
+
+            mainMethod.Body.InitLocals = true;
+            var il = mainMethod.Body.GetILProcessor();
+            var ctx = new BodyContext(mainMethod, programType, new[] { "args" }, il, _module);
+
+            foreach (var stmt in topLevelStatements)
+                EmitStatement(stmt, ctx);
+
+            if (!EndsWithRet(mainMethod))
+                il.Emit(OpCodes.Ret);
+
+            _module.EntryPoint = mainMethod;
+        }
 
         return _module.Assembly;
     }
