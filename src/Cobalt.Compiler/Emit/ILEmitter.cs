@@ -1310,14 +1310,23 @@ public sealed class ILEmitter
         {
             // instance.Method(...) or Type.Method(...)
             var targetName = memberAccess.Target is IdentifierExpression id2 ? id2.Name : null;
+            bool isStaticCall = false;
 
-            // Check if it's a static call on a known type
+            // Check if it's a static call on a Cobalt-defined type
             if (targetName != null && _typeDefs.TryGetValue(targetName, out var staticType))
             {
                 methodRef = staticType.Methods.FirstOrDefault(m => m.Name == memberAccess.MemberName);
+                if (methodRef != null) isStaticCall = true;
             }
 
-            if (methodRef == null)
+            // Check well-known BCL static methods
+            if (methodRef == null && targetName != null)
+            {
+                methodRef = ResolveBclStaticMethod(targetName, memberAccess.MemberName, invocation.Arguments.Count);
+                if (methodRef != null) isStaticCall = true;
+            }
+
+            if (!isStaticCall)
             {
                 // Emit target (push instance)
                 EmitExpression(memberAccess.Target, ctx);
@@ -1329,7 +1338,7 @@ public sealed class ILEmitter
 
             if (methodRef != null)
             {
-                il.Emit(OpCodes.Call, methodRef);
+                il.Emit(isStaticCall ? OpCodes.Call : OpCodes.Callvirt, methodRef);
                 returnType = methodRef.ReturnType;
             }
             else
@@ -1343,6 +1352,23 @@ public sealed class ILEmitter
         }
         else if (invocation.Target is IdentifierExpression identExpr)
         {
+            // Check if this is a union variant constructor call (e.g., Acquired(...), Exhausted(...))
+            var variantType = FindVariantType(identExpr.Name);
+            if (variantType != null)
+            {
+                var variantCtor = variantType.Methods.FirstOrDefault(m =>
+                    m.Name == ".ctor" && m.Parameters.Count == invocation.Arguments.Count);
+                if (variantCtor != null)
+                {
+                    foreach (var arg in invocation.Arguments)
+                        EmitExpression(arg.Expression, ctx);
+                    il.Emit(OpCodes.Newobj, variantCtor);
+                    // Return the union base type (parent of the variant)
+                    returnType = variantType.BaseType ?? variantType;
+                    return returnType;
+                }
+            }
+
             // Direct function call (top-level or method in same class)
             MethodDefinition? found = null;
             if (_topLevelClass != null)
@@ -1350,22 +1376,23 @@ public sealed class ILEmitter
             if (found == null && ctx.ContainingType != null)
                 found = ctx.ContainingType.Methods.FirstOrDefault(m => m.Name == identExpr.Name);
 
-            if (!found?.IsStatic ?? true)
-            {
-                // Instance call — push this
-                il.Emit(OpCodes.Ldarg_0);
-            }
-
-            foreach (var arg in invocation.Arguments)
-                EmitExpression(arg.Expression, ctx);
-
             if (found != null)
             {
+                if (!found.IsStatic)
+                    il.Emit(OpCodes.Ldarg_0);
+
+                foreach (var arg in invocation.Arguments)
+                    EmitExpression(arg.Expression, ctx);
+
                 il.Emit(found.IsStatic ? OpCodes.Call : OpCodes.Callvirt, found);
                 returnType = found.ReturnType;
             }
             else
             {
+                // Unknown function — emit args, pop all, push null
+                il.Emit(OpCodes.Ldarg_0);
+                foreach (var arg in invocation.Arguments)
+                    EmitExpression(arg.Expression, ctx);
                 for (int i = 0; i < invocation.Arguments.Count + 1; i++)
                     il.Emit(OpCodes.Pop);
                 il.Emit(OpCodes.Ldnull);
@@ -1515,14 +1542,16 @@ public sealed class ILEmitter
                 if (field != null)
                 {
                     il.Emit(OpCodes.Stfld, field);
-                    return field.FieldType;
+                    // Stfld consumes both obj and value, pushes nothing.
+                    // Return Void so ExpressionStatement doesn't try to pop.
+                    return _module.TypeSystem.Void;
                 }
             }
 
             // Unknown member — pop both target and value
             il.Emit(OpCodes.Pop);
             il.Emit(OpCodes.Pop);
-            return _module.TypeSystem.Object;
+            return _module.TypeSystem.Void;
         }
         else
         {
@@ -1745,6 +1774,36 @@ public sealed class ILEmitter
         };
         ctor.Parameters.Add(new ParameterDefinition(_module.TypeSystem.String));
         return ctor;
+    }
+
+    private MethodReference? ResolveBclStaticMethod(string typeName, string methodName, int argCount)
+    {
+        // Console.WriteLine(string)
+        if (typeName == "Console" && methodName == "WriteLine" && argCount == 1)
+        {
+            var consoleType = new TypeReference("System", "Console", _module, _module.TypeSystem.CoreLibrary);
+            var method = new MethodReference("WriteLine", _module.TypeSystem.Void, consoleType) { HasThis = false };
+            method.Parameters.Add(new ParameterDefinition(_module.TypeSystem.String));
+            return method;
+        }
+        // Console.Write(string)
+        if (typeName == "Console" && methodName == "Write" && argCount == 1)
+        {
+            var consoleType = new TypeReference("System", "Console", _module, _module.TypeSystem.CoreLibrary);
+            var method = new MethodReference("Write", _module.TypeSystem.Void, consoleType) { HasThis = false };
+            method.Parameters.Add(new ParameterDefinition(_module.TypeSystem.String));
+            return method;
+        }
+        // File.OpenRead(string), File.Create(string)
+        if (typeName == "File" && (methodName == "OpenRead" || methodName == "Create") && argCount == 1)
+        {
+            var fileType = new TypeReference("System.IO", "File", _module, _module.TypeSystem.CoreLibrary);
+            var streamType = new TypeReference("System.IO", "Stream", _module, _module.TypeSystem.CoreLibrary);
+            var method = new MethodReference(methodName, streamType, fileType) { HasThis = false };
+            method.Parameters.Add(new ParameterDefinition(_module.TypeSystem.String));
+            return method;
+        }
+        return null;
     }
 
     private static void EmitNotImplementedBody(MethodDefinition method)
