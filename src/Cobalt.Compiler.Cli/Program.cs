@@ -1,3 +1,4 @@
+using Cobalt.Compiler.Diagnostics;
 using Cobalt.Compiler.Driver;
 
 if (args.Length == 0)
@@ -8,23 +9,33 @@ if (args.Length == 0)
 
 // Parse options
 var files = new List<string>();
+string? outputPath = null;
 bool dumpAst = false, dumpSymbols = false, dumpAll = false;
 
-foreach (var arg in args)
+for (int i = 0; i < args.Length; i++)
 {
-    switch (arg)
+    switch (args[i])
     {
         case "--dump-ast": dumpAst = true; break;
         case "--dump-symbols": dumpSymbols = true; break;
         case "--dump-all": dumpAll = true; break;
-        case "--help" or "-h": PrintUsage(); return 0;
-        default:
-            if (arg.StartsWith('-'))
+        case "-o":
+            if (i + 1 < args.Length)
+                outputPath = args[++i];
+            else
             {
-                Console.Error.WriteLine($"Unknown option: {arg}");
+                Console.Error.WriteLine("Error: -o requires an output path");
                 return 1;
             }
-            files.Add(arg);
+            break;
+        case "--help" or "-h": PrintUsage(); return 0;
+        default:
+            if (args[i].StartsWith('-'))
+            {
+                Console.Error.WriteLine($"Unknown option: {args[i]}");
+                return 1;
+            }
+            files.Add(args[i]);
             break;
     }
 }
@@ -41,53 +52,85 @@ if (files.Count == 0)
     return 1;
 }
 
-int exitCode = 0;
-
+// Check all files exist
 foreach (var file in files)
 {
     if (!File.Exists(file))
     {
         Console.Error.WriteLine($"Error: file not found: {file}");
-        exitCode = 1;
-        continue;
+        return 1;
     }
-
-    var source = File.ReadAllText(file);
-    var compilation = new Compilation(source, file);
-
-    // Run full pipeline
-    compilation.RunAll();
-
-    // Dump outputs
-    if (dumpAst)
-    {
-        Console.WriteLine($"=== AST: {file} ===");
-        Console.Write(compilation.DumpAst());
-        Console.WriteLine();
-    }
-
-    if (dumpSymbols)
-    {
-        Console.WriteLine($"=== Symbols: {file} ===");
-        Console.Write(compilation.DumpSymbols());
-        Console.WriteLine();
-    }
-
-    // Always print diagnostics
-    var diagnosticOutput = compilation.DumpDiagnostics();
-    if (!string.IsNullOrEmpty(diagnosticOutput))
-    {
-        Console.Write(diagnosticOutput);
-    }
-
-    if (compilation.Diagnostics.HasErrors)
-        exitCode = 1;
 }
 
-if (exitCode == 0 && !dumpAst && !dumpSymbols)
-    Console.WriteLine("Compilation succeeded.");
+bool isDumpOnly = dumpAst || dumpSymbols;
+bool isCompile = outputPath != null || !isDumpOnly;
 
-return exitCode;
+var compilation = new Compilation();
+
+if (isDumpOnly && !isCompile)
+{
+    // Dump mode: analyze each file individually
+    foreach (var file in files)
+    {
+        var source = File.ReadAllText(file);
+        var comp = new Compilation();
+        comp.Analyze(source, file);
+
+        if (dumpAst)
+        {
+            Console.WriteLine($"=== AST: {file} ===");
+            Console.Write(comp.DumpAst());
+            Console.WriteLine();
+        }
+
+        if (dumpSymbols)
+        {
+            Console.WriteLine($"=== Symbols: {file} ===");
+            Console.Write(comp.DumpSymbols());
+            Console.WriteLine();
+        }
+
+        var diagOutput = comp.FormatDiagnostics();
+        if (!string.IsNullOrEmpty(diagOutput))
+            Console.Write(diagOutput);
+    }
+    return 0;
+}
+
+// Compile mode: multi-file compilation to assembly
+outputPath ??= Path.ChangeExtension(files[0], ".dll");
+
+bool success = compilation.Compile(files.ToArray(), outputPath);
+
+// Dump intermediate results if requested
+if (dumpAst)
+{
+    Console.WriteLine($"=== AST (merged) ===");
+    Console.Write(compilation.DumpAst());
+    Console.WriteLine();
+}
+
+if (dumpSymbols)
+{
+    Console.WriteLine($"=== Symbols ===");
+    Console.Write(compilation.DumpSymbols());
+    Console.WriteLine();
+}
+
+// Print diagnostics
+foreach (var d in compilation.Diagnostics.All)
+{
+    var stream = d.Severity == DiagnosticSeverity.Error ? Console.Error : Console.Out;
+    stream.WriteLine(d);
+}
+
+if (success)
+{
+    Console.WriteLine($"Compiled successfully: {outputPath}");
+    return 0;
+}
+
+return 1;
 
 static void PrintUsage()
 {
@@ -97,13 +140,14 @@ static void PrintUsage()
         Usage: cobaltc [options] <file.co> [file2.co ...]
 
         Options:
+          -o <path>        Output assembly path (default: <first-file>.dll)
           --dump-ast       Print the parsed AST
           --dump-symbols   Print resolved type symbols
           --dump-all       Print all dump outputs
           --help, -h       Show this help
 
         Examples:
-          cobaltc main.co
+          cobaltc main.co processor.co -o app.dll
           cobaltc --dump-ast samples/cobalt-syntax/main.co
           cobaltc --dump-all samples/cobalt-syntax/*.co
         """);
