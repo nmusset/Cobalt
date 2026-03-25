@@ -518,6 +518,10 @@ public sealed class ILEmitter
                 EmitForEach(forEach, ctx);
                 break;
 
+            case MatchStatement matchStmt:
+                EmitMatch(matchStmt, ctx);
+                break;
+
             case BreakStatement:
                 if (ctx.LoopLabels.Count > 0)
                     il.Emit(OpCodes.Br, ctx.LoopLabels.Peek().BreakTarget);
@@ -659,6 +663,137 @@ public sealed class ILEmitter
         il.Emit(OpCodes.Brtrue, bodyStart);
 
         il.Append(endLabel);
+    }
+
+    // ──────────────────────────────────────────────
+    // Match statement emission
+    // ──────────────────────────────────────────────
+
+    private void EmitMatch(MatchStatement matchStmt, BodyContext ctx)
+    {
+        var il = ctx.IL;
+        var endLabel = il.Create(OpCodes.Nop);
+
+        // Evaluate subject and store in a temp local
+        var subjectType = EmitExpression(matchStmt.Subject, ctx) ?? _module.TypeSystem.Object;
+        var subjectLocal = new VariableDefinition(subjectType);
+        ctx.Method.Body.Variables.Add(subjectLocal);
+        il.Emit(OpCodes.Stloc, subjectLocal);
+
+        foreach (var arm in matchStmt.Arms)
+        {
+            switch (arm.Pattern)
+            {
+                case VariantPattern variant:
+                {
+                    var variantType = FindVariantType(variant.VariantName);
+                    if (variantType == null)
+                    {
+                        il.Emit(OpCodes.Nop);
+                        break;
+                    }
+
+                    var nextArmLabel = il.Create(OpCodes.Nop);
+
+                    // Type test: isinst + brfalse
+                    il.Emit(OpCodes.Ldloc, subjectLocal);
+                    il.Emit(OpCodes.Isinst, variantType);
+                    il.Emit(OpCodes.Brfalse, nextArmLabel);
+
+                    // Cast and extract fields for sub-patterns
+                    il.Emit(OpCodes.Ldloc, subjectLocal);
+                    il.Emit(OpCodes.Castclass, variantType);
+
+                    var castedLocal = new VariableDefinition(variantType);
+                    ctx.Method.Body.Variables.Add(castedLocal);
+                    il.Emit(OpCodes.Stloc, castedLocal);
+
+                    // Bind sub-pattern variables to fields
+                    var fields = variantType.Fields;
+                    for (int i = 0; i < variant.SubPatterns.Count && i < fields.Count; i++)
+                    {
+                        if (variant.SubPatterns[i] is VarPattern vp)
+                        {
+                            il.Emit(OpCodes.Ldloc, castedLocal);
+                            il.Emit(OpCodes.Ldfld, fields[i]);
+                            var fieldLocal = new VariableDefinition(fields[i].FieldType);
+                            ctx.Method.Body.Variables.Add(fieldLocal);
+                            ctx.Locals[vp.VariableName] = fieldLocal;
+                            il.Emit(OpCodes.Stloc, fieldLocal);
+                        }
+                        // DiscardPattern — no binding needed
+                    }
+
+                    EmitArmBody(arm.Body, ctx);
+                    il.Emit(OpCodes.Br, endLabel);
+                    il.Append(nextArmLabel);
+                    break;
+                }
+
+                case VarPattern varPat:
+                {
+                    // Catch-all: bind subject to local, no type test
+                    var catchAllLocal = new VariableDefinition(subjectType);
+                    ctx.Method.Body.Variables.Add(catchAllLocal);
+                    ctx.Locals[varPat.VariableName] = catchAllLocal;
+                    il.Emit(OpCodes.Ldloc, subjectLocal);
+                    il.Emit(OpCodes.Stloc, catchAllLocal);
+
+                    EmitArmBody(arm.Body, ctx);
+                    il.Emit(OpCodes.Br, endLabel);
+                    break;
+                }
+
+                case DiscardPattern:
+                {
+                    // Wildcard: emit body unconditionally
+                    EmitArmBody(arm.Body, ctx);
+                    il.Emit(OpCodes.Br, endLabel);
+                    break;
+                }
+            }
+        }
+
+        // Safety-net: throw new InvalidOperationException("No matching pattern")
+        il.Emit(OpCodes.Ldstr, "No matching pattern");
+        il.Emit(OpCodes.Newobj, ImportInvalidOperationExceptionCtor());
+        il.Emit(OpCodes.Throw);
+
+        il.Append(endLabel);
+    }
+
+    private void EmitArmBody(SyntaxNode body, BodyContext ctx)
+    {
+        if (body is StatementNode stmt)
+            EmitStatement(stmt, ctx);
+        else if (body is ExpressionNode expr)
+        {
+            var t = EmitExpression(expr, ctx);
+            if (t != null && t.FullName != "System.Void")
+                ctx.IL.Emit(OpCodes.Pop);
+        }
+    }
+
+    private TypeDefinition? FindVariantType(string variantName)
+    {
+        // Check composite keys like "Shape.Circle"
+        foreach (var kvp in _typeDefs)
+        {
+            if (kvp.Key.EndsWith("." + variantName))
+                return kvp.Value;
+        }
+
+        // Check nested types of all type definitions
+        foreach (var kvp in _typeDefs)
+        {
+            foreach (var nested in kvp.Value.NestedTypes)
+            {
+                if (nested.Name == variantName)
+                    return nested;
+            }
+        }
+
+        return null;
     }
 
     // ──────────────────────────────────────────────
