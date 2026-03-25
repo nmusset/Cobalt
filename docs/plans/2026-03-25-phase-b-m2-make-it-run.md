@@ -23,7 +23,7 @@ Three workstreams:
 - Lifetime validation in borrow checker
 - Generic type instantiation (`GenericInstanceType`)
 - Cast expression parsing and emission
-- Pattern match exhaustiveness checking
+- Pattern match exhaustiveness checking (M2 uses a throw-on-no-match safety net)
 - Cross-assembly borrow checking (consuming Cobalt from Cobalt)
 - Embedded compiler-synthesized attributes (replace Phase A references)
 - Three-file pipeline compilation (`main.co` + `processor.co` + `transforms.co`)
@@ -33,23 +33,57 @@ Three workstreams:
 
 ## WS1: IL Emitter Completeness
 
-Six critical gaps block execution. Each is described with the IL strategy.
+Six critical gaps block execution, plus two infrastructure items. Each is described with the IL strategy.
+
+### 0. Entry Point / Executable Generation
+
+**Problem:** The emitter hardcodes `ModuleKind.Dll`. To actually run assemblies, we need console executables with entry points.
+
+**Strategy:** When the compilation unit contains top-level statements (not inside a class), the emitter:
+- Uses `ModuleKind.Console` instead of `ModuleKind.Dll`
+- Generates a synthetic `Program` class with a `static void Main(string[] args)` method
+- Emits top-level statements into the Main method body
+- Sets the assembly's `EntryPoint` to this method
+
+The CLI should default to `.dll` output with `-o`, but when top-level statements are present and no `-o` is given, produce a `.dll` that has an entry point (a .NET "console library" — runnable via `dotnet <name>.dll`).
+
+### 0b. BCL Method Resolution
+
+**Problem:** The emitter can only resolve methods on user-defined types (via `_typeDefs`). Foreach, using-var disposal, and BCL calls all need to resolve methods on external .NET types.
+
+**Strategy:** Add a `ResolveBclMethod` helper that constructs `MethodReference` objects for known BCL methods via Cecil's `ImportReference`. For well-known patterns:
+- `IDisposable.Dispose()` — constructed as `MethodReference` on `System.IDisposable`
+- `IEnumerator.MoveNext()` — constructed on `System.Collections.IEnumerator`
+- `IEnumerator<T>.get_Current()` — constructed on the generic interface
+- `IEnumerable<T>.GetEnumerator()` — constructed on the generic interface
+
+For the MVP, we support a small set of well-known BCL methods. General BCL method resolution (arbitrary overloads) is deferred to M3.
 
 ### 1. Match Statement Emission
 
 **Problem:** `match` statements emit Nop placeholders. Union variant dispatch does not work.
 
-**Strategy:** Union variants compile to nested sealed classes (e.g., `Shape/CircleCase`). Match dispatch uses type-testing:
+**Strategy:** Union variants compile to nested sealed classes (e.g., `Shape/Circle`, `Shape/Rectangle` — the nested type uses the variant name directly). Match dispatch uses type-testing:
 
 ```
-load subject
-isinst Shape/CircleCase → if true: cast, extract fields into locals, emit arm body
-isinst Shape/RectangleCase → if true: cast, extract fields into locals, emit arm body
+load subject → store in temp local
+ldloc temp
+isinst Shape/Circle → brfalse next_arm
+ldloc temp
+castclass Shape/Circle → extract fields into locals, emit arm body, br end_label
+next_arm:
+ldloc temp
+isinst Shape/Rectangle → brfalse next_arm2
 ... (for each arm)
-br end_label
+default_arm:
+newobj System.InvalidOperationException::.ctor("No matching pattern")
+throw
+end_label:
 ```
 
-For `var` patterns (catch-all): no type test, bind subject to a local directly.
+The `throw` at the end is a safety net — without exhaustiveness checking (deferred to M3), unmatched values throw at runtime rather than producing undefined behavior.
+
+For `var` patterns (catch-all): no type test, bind subject to a local directly. Since it matches everything, no subsequent arms or throw are needed.
 
 Pattern variable binding (`var r` in `Circle(var r)`): after the cast, load each constructor field from the variant instance and store into fresh locals named by the pattern variables.
 
@@ -78,6 +112,8 @@ condition_label:
 
 The `ref`/`ref mut` modifiers on the loop variable are compile-time only (borrow checker enforces them at analysis time) — no special IL is needed at runtime.
 
+**Note:** The standard .NET pattern also wraps the loop in try/finally to dispose the enumerator. For M2, we emit the basic loop without enumerator disposal. Enumerator disposal can be added in M3 alongside generic type instantiation.
+
 ### 4. Break/Continue
 
 **Problem:** Break and continue emit Nop. Loops execute incorrectly.
@@ -104,13 +140,20 @@ eval initializer → store using_local
 }
 finally {
     ldloc using_local
+    brfalse end_finally       // null-check: skip Dispose if null
+    ldloc using_local
     callvirt System.IDisposable::Dispose()
+    end_finally:
     endfinally
 }
 end_label:
 ```
 
+The null-check matches the standard C# `using` pattern — prevents `NullReferenceException` if the initializer returns null.
+
 Multiple `using var` declarations in the same block nest: each wraps the remainder (including subsequent using vars).
+
+**Implementation note:** Cecil models exception handlers via `MethodBody.ExceptionHandlers` with `TryStart`, `TryEnd`, `HandlerStart`, `HandlerEnd` instruction references. Care is needed to set boundaries correctly — emit all try-body instructions first, then append the handler instructions.
 
 ### 6. Impl Block Emission
 
@@ -118,8 +161,8 @@ Multiple `using var` declarations in the same block nest: each wraps the remaind
 
 **Strategy:**
 
-- **Pass 1 (DeclareTypes):** When encountering `ImplBlock`, look up the target type's `TypeDefinition` and the trait's `TypeDefinition` (which is an interface). Add the interface to the target type's `Interfaces` collection if not already present.
-- **Pass 2 (EmitMemberSignatures):** For each method in the impl block, add a `MethodDefinition` to the target type. Mark it as a virtual/final method implementing the interface method.
+- **Pass 1 (DeclareTypes):** Add a `case ImplBlock:` branch to `DeclareTopLevelMember`. Look up the target type's `TypeDefinition` and the trait's `TypeDefinition` (which is an interface). Add the interface to the target type's `Interfaces` collection if not already present.
+- **Pass 2 (EmitMemberSignatures):** Add a `case ImplBlock:` branch to `EmitMemberSignatures`. For each method in the impl block, add a `MethodDefinition` to the target type. Mark it as a virtual/final method implementing the interface method.
 - **Pass 3 (EmitBodies):** Queue the method bodies for emission, same as class methods.
 
 ---
@@ -213,6 +256,16 @@ Updated to reflect:
 ### Milestone 3 backlog
 
 Listed as bullet points in the main roadmap. No detailed plan until M2 is complete.
+
+---
+
+## Known Risks
+
+1. **Cecil exception handler API complexity.** Try/finally for `using var` requires careful instruction offset management via `MethodBody.ExceptionHandlers`. Getting boundaries wrong produces invalid assemblies.
+
+2. **Union variant constructors call `Object..ctor()` instead of the union base class constructor.** The base class has a private constructor. Variant constructors bypass it. PEVerify may flag this. Fix: change the base constructor to `protected` and chain correctly.
+
+3. **Emitter header comment says "two-pass" but the code is three-pass.** Minor cleanup during M2 — update the comment to match reality.
 
 ---
 
