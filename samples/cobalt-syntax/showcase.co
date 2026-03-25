@@ -1,0 +1,86 @@
+// Cobalt Showcase — demonstrates ownership, borrowing, pattern matching,
+// traits, unions, and using-var disposal in a single file.
+//
+// Compile: cobaltc showcase.co -o showcase.dll
+// This file exercises every Cobalt-specific feature the compiler supports.
+
+namespace Cobalt.Showcase;
+
+use System;
+
+// ── Union type with multiple variants ──────────────────────
+
+union AcquireResult
+{
+    Acquired(string Name),
+    Exhausted(string Reason),
+}
+
+// ── Trait with ownership in signature ──────────────────────
+
+trait Disposable
+{
+    public void Dispose();
+}
+
+// ── Class with owned fields, implementing a trait ──────────
+
+public class ResourcePool : Disposable
+{
+    own string name;
+    int capacity;
+    int used;
+
+    public ResourcePool(own string poolName, int poolCapacity)
+    {
+        this.name = poolName;
+        this.capacity = poolCapacity;
+        this.used = 0;
+    }
+
+    // Returns owned value — caller must manage it
+    public own AcquireResult Acquire()
+    {
+        if (used >= capacity)
+        {
+            return Exhausted($"Pool {name} is full");
+        }
+        used = used + 1;
+        return Acquired($"resource-{used}");
+    }
+
+    // Takes a borrowed reference — pool retains ownership
+    public void Report(ref string label)
+    {
+        Console.WriteLine($"{label}: {used}/{capacity} used");
+        return;
+    }
+
+    // Match on union result with pattern variable binding
+    public string DescribeResult(own AcquireResult result)
+    {
+        match (result)
+        {
+            Acquired(var res) => {
+                return $"Got: {res}";
+            },
+            Exhausted(var reason) => {
+                return $"Failed: {reason}";
+            },
+        };
+        return "unknown";
+    }
+
+    public void Dispose()
+    {
+        Console.WriteLine($"Disposing pool {name}");
+        return;
+    }
+}
+
+// ── Free-standing function with borrowing ──────────────────
+
+public string Summarize(ref ResourcePool pool)
+{
+    return $"Pool summary reported";
+}
