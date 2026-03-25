@@ -614,11 +614,51 @@ public sealed class ILEmitter
 
     private void EmitForEach(ForEachStatement forEach, BodyContext ctx)
     {
-        // Simplified: emit iterable and skip — full IEnumerator pattern is complex
-        // In full implementation this would use GetEnumerator/MoveNext/Current
+        var il = ctx.IL;
+
+        // Emit iterable and call GetEnumerator()
         EmitExpression(forEach.Iterable, ctx);
-        ctx.IL.Emit(OpCodes.Pop);
-        ctx.IL.Emit(OpCodes.Nop); // placeholder for body
+        il.Emit(OpCodes.Callvirt, ImportGetEnumerator());
+
+        // Store enumerator in a local
+        var enumeratorType = new TypeReference("System.Collections", "IEnumerator", _module, _module.TypeSystem.CoreLibrary);
+        var enumeratorLocal = new VariableDefinition(enumeratorType);
+        ctx.Method.Body.Variables.Add(enumeratorLocal);
+        il.Emit(OpCodes.Stloc, enumeratorLocal);
+
+        // Labels
+        var conditionLabel = il.Create(OpCodes.Nop);
+        var endLabel = il.Create(OpCodes.Nop);
+
+        // Jump to condition first
+        il.Emit(OpCodes.Br, conditionLabel);
+
+        // Loop body start
+        var bodyStart = il.Create(OpCodes.Nop);
+        il.Append(bodyStart);
+
+        // Load current element
+        il.Emit(OpCodes.Ldloc, enumeratorLocal);
+        il.Emit(OpCodes.Callvirt, ImportGetCurrent());
+
+        // Store in loop variable
+        var elementLocal = new VariableDefinition(_module.TypeSystem.Object);
+        ctx.Method.Body.Variables.Add(elementLocal);
+        ctx.Locals[forEach.VariableName] = elementLocal;
+        il.Emit(OpCodes.Stloc, elementLocal);
+
+        // Push loop labels for break/continue
+        ctx.LoopLabels.Push((endLabel, conditionLabel));
+        EmitStatement(forEach.Body, ctx);
+        ctx.LoopLabels.Pop();
+
+        // Condition: call MoveNext()
+        il.Append(conditionLabel);
+        il.Emit(OpCodes.Ldloc, enumeratorLocal);
+        il.Emit(OpCodes.Callvirt, ImportMoveNext());
+        il.Emit(OpCodes.Brtrue, bodyStart);
+
+        il.Append(endLabel);
     }
 
     // ──────────────────────────────────────────────

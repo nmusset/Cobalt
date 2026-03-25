@@ -88,4 +88,25 @@ public class ILEmitterLoopTests
         var brInstructions = instructions.Where(i => i.OpCode == OpCodes.Br).ToList();
         Assert.True(brInstructions.Count >= 2, "Expected at least 2 Br instructions (continue + loop back)");
     }
+
+    [Fact]
+    public void Emit_ForEach_EmitsMoveNextLoop()
+    {
+        var asm = Emit("""
+            public class ForEachTest
+            {
+                public void Run(List items)
+                {
+                    foreach (var item in items)
+                    {
+                        var x = item;
+                    }
+                    return;
+                }
+            }
+            """);
+        var method = GetMethod(GetType(asm, "ForEachTest"), "Run");
+        Assert.True(HasOpCode(method, OpCodes.Callvirt));
+        Assert.True(HasOpCode(method, OpCodes.Brtrue));
+    }
 }

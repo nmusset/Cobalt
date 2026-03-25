@@ -647,7 +647,7 @@ public class ILEmitterTests
     // ──────────────────────────────────────────────
 
     [Fact]
-    public void Emit_ForEach_EmitsPlaceholder()
+    public void Emit_ForEach_EmitsIEnumeratorPattern()
     {
         var asm = Emit("""
             public class Each
@@ -663,9 +663,9 @@ public class ILEmitterTests
             }
             """);
         var method = GetMethod(GetType(asm, "Each"), "Iter");
-        // ForEach placeholder: pops iterable, emits nop
-        Assert.True(HasOpCode(method, OpCodes.Pop));
-        Assert.True(HasOpCode(method, OpCodes.Nop));
+        // ForEach emits IEnumerator pattern: Callvirt (GetEnumerator, get_Current, MoveNext) and Brtrue
+        Assert.True(HasOpCode(method, OpCodes.Callvirt));
+        Assert.True(HasOpCode(method, OpCodes.Brtrue));
     }
 
     // ══════════════════════════════════════════════
