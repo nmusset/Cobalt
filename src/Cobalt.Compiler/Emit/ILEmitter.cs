@@ -518,6 +518,19 @@ public sealed class ILEmitter
                 EmitForEach(forEach, ctx);
                 break;
 
+            case BreakStatement:
+                if (ctx.LoopLabels.Count > 0)
+                    il.Emit(OpCodes.Br, ctx.LoopLabels.Peek().BreakTarget);
+                else
+                    il.Emit(OpCodes.Nop);
+                return;
+            case ContinueStatement:
+                if (ctx.LoopLabels.Count > 0)
+                    il.Emit(OpCodes.Br, ctx.LoopLabels.Peek().ContinueTarget);
+                else
+                    il.Emit(OpCodes.Nop);
+                return;
+
             default:
                 // Unsupported statement — emit nop as placeholder
                 il.Emit(OpCodes.Nop);
@@ -558,7 +571,11 @@ public sealed class ILEmitter
         il.Append(condLabel);
         EmitExpression(whileStmt.Condition, ctx);
         il.Emit(OpCodes.Brfalse, endLabel);
+
+        ctx.LoopLabels.Push((endLabel, condLabel));
         EmitStatement(whileStmt.Body, ctx);
+        ctx.LoopLabels.Pop();
+
         il.Emit(OpCodes.Br, condLabel);
         il.Append(endLabel);
     }
@@ -571,6 +588,7 @@ public sealed class ILEmitter
 
         var condLabel = il.Create(OpCodes.Nop);
         var endLabel = il.Create(OpCodes.Nop);
+        var incrementLabel = il.Create(OpCodes.Nop);
 
         il.Append(condLabel);
         if (forStmt.Condition != null)
@@ -579,8 +597,11 @@ public sealed class ILEmitter
             il.Emit(OpCodes.Brfalse, endLabel);
         }
 
+        ctx.LoopLabels.Push((endLabel, incrementLabel));
         EmitStatement(forStmt.Body, ctx);
+        ctx.LoopLabels.Pop();
 
+        il.Append(incrementLabel);
         if (forStmt.Increment != null)
         {
             var t = EmitExpression(forStmt.Increment, ctx);
@@ -1356,6 +1377,7 @@ internal sealed class BodyContext
     public IReadOnlyList<string> ParamNames { get; }
     public ILProcessor IL { get; }
     public Dictionary<string, VariableDefinition> Locals { get; } = new();
+    public Stack<(Instruction BreakTarget, Instruction ContinueTarget)> LoopLabels { get; } = new();
     public ModuleDefinition Module { get; }
 
     public BodyContext(MethodDefinition method, TypeDefinition? containingType,
