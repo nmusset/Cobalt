@@ -32,6 +32,11 @@ public sealed class ILEmitter
     // Deferred method bodies: (syntax, Cecil definition, parameter name list)
     private readonly List<PendingBody> _pendingBodies = [];
 
+    // Ownership attribute constructors
+    private readonly MethodReference? _ownedAttrCtor;
+    private readonly MethodReference? _borrowedAttrCtor;
+    private readonly MethodReference? _mutBorrowedAttrCtor;
+
     // ──────────────────────────────────────────────
     // Public API
     // ──────────────────────────────────────────────
@@ -43,6 +48,10 @@ public sealed class ILEmitter
         var kind = hasEntryPoint ? ModuleKind.Console : ModuleKind.Dll;
         var assembly = AssemblyDefinition.CreateAssembly(asmName, assemblyName + ".dll", kind);
         _module = assembly.MainModule;
+
+        _ownedAttrCtor = _module.ImportReference(typeof(Cobalt.Annotations.OwnedAttribute).GetConstructor(Type.EmptyTypes));
+        _borrowedAttrCtor = _module.ImportReference(typeof(Cobalt.Annotations.BorrowedAttribute).GetConstructor(Type.EmptyTypes));
+        _mutBorrowedAttrCtor = _module.ImportReference(typeof(Cobalt.Annotations.MutBorrowedAttribute).GetConstructor(Type.EmptyTypes));
     }
 
     public AssemblyDefinition Emit(CompilationUnit unit)
@@ -333,6 +342,27 @@ public sealed class ILEmitter
     }
 
     // ──────────────────────────────────────────────
+    // Ownership attribute helpers
+    // ──────────────────────────────────────────────
+
+    private CustomAttribute? CreateOwnershipAttribute(OwnershipModifier mod) => mod switch
+    {
+        OwnershipModifier.Own when _ownedAttrCtor != null => new CustomAttribute(_ownedAttrCtor),
+        OwnershipModifier.Ref when _borrowedAttrCtor != null => new CustomAttribute(_borrowedAttrCtor),
+        OwnershipModifier.RefMut when _mutBorrowedAttrCtor != null => new CustomAttribute(_mutBorrowedAttrCtor),
+        _ => null
+    };
+
+    private void AttachOwnershipAttributes(IEnumerable<ParameterSyntax> astParams, MethodDefinition methodDef)
+    {
+        foreach (var (astParam, cecilParam) in astParams.Zip(methodDef.Parameters))
+        {
+            var attr = CreateOwnershipAttribute(astParam.Ownership);
+            if (attr != null) cecilParam.CustomAttributes.Add(attr);
+        }
+    }
+
+    // ──────────────────────────────────────────────
     // Field, property, method signature helpers
     // ──────────────────────────────────────────────
 
@@ -342,6 +372,8 @@ public sealed class ILEmitter
         if (field.Access == AccessModifier.Public) attrs = FieldAttributes.Public;
         var fieldType = ResolveTypeSyntax(field.Type) ?? _module.TypeSystem.Object;
         var fieldDef = new FieldDefinition(field.Name, attrs, fieldType);
+        var ownerAttr = CreateOwnershipAttribute(field.Ownership);
+        if (ownerAttr != null) fieldDef.CustomAttributes.Add(ownerAttr);
         typeDef.Fields.Add(fieldDef);
         return fieldDef;
     }
@@ -405,6 +437,11 @@ public sealed class ILEmitter
             methodDef.Parameters.Add(new ParameterDefinition(param.Name, ParameterAttributes.None, paramType));
         }
 
+        // Attach ownership attributes to parameters and return type
+        AttachOwnershipAttributes(method.Parameters, methodDef);
+        var retAttr = CreateOwnershipAttribute(method.ReturnOwnership);
+        if (retAttr != null) methodDef.MethodReturnType.CustomAttributes.Add(retAttr);
+
         if (method.Body != null)
         {
             var paramNames = method.Parameters.Select(p => p.Name).ToList();
@@ -432,6 +469,11 @@ public sealed class ILEmitter
             methodDef.Parameters.Add(new ParameterDefinition(param.Name, ParameterAttributes.None, paramType));
         }
 
+        // Attach ownership attributes to parameters and return type
+        AttachOwnershipAttributes(method.Parameters, methodDef);
+        var retAttr = CreateOwnershipAttribute(method.ReturnOwnership);
+        if (retAttr != null) methodDef.MethodReturnType.CustomAttributes.Add(retAttr);
+
         typeDef.Methods.Add(methodDef);
     }
 
@@ -447,6 +489,9 @@ public sealed class ILEmitter
             var paramType = ResolveTypeSyntax(param.Type) ?? _module.TypeSystem.Object;
             ctorDef.Parameters.Add(new ParameterDefinition(param.Name, ParameterAttributes.None, paramType));
         }
+
+        // Attach ownership attributes to constructor parameters
+        AttachOwnershipAttributes(ctor.Parameters, ctorDef);
 
         if (ctor.Body != null)
         {
