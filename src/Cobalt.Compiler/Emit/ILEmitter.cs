@@ -450,8 +450,73 @@ public sealed class ILEmitter
 
     private void EmitBlock(BlockStatement block, BodyContext ctx)
     {
-        foreach (var stmt in block.Statements)
-            EmitStatement(stmt, ctx);
+        EmitStatementRange(block.Statements, 0, ctx);
+    }
+
+    private void EmitStatementRange(IReadOnlyList<StatementNode> statements, int startIdx, BodyContext ctx)
+    {
+        for (int i = startIdx; i < statements.Count; i++)
+        {
+            if (statements[i] is UsingVarDeclaration usingDecl)
+            {
+                EmitUsingVarWithFinally(usingDecl, statements, i + 1, ctx);
+                return; // remaining statements are inside the try block
+            }
+            EmitStatement(statements[i], ctx);
+        }
+    }
+
+    private void EmitUsingVarWithFinally(UsingVarDeclaration usingDecl,
+        IReadOnlyList<StatementNode> remainingStatements, int startIdx, BodyContext ctx)
+    {
+        var il = ctx.IL;
+
+        // Emit initializer and store in local
+        var localType = usingDecl.Initializer != null
+            ? (EmitExpression(usingDecl.Initializer, ctx) ?? _module.TypeSystem.Object)
+            : _module.TypeSystem.Object;
+        var usingLocal = new VariableDefinition(localType);
+        ctx.Method.Body.Variables.Add(usingLocal);
+        ctx.Locals[usingDecl.Name] = usingLocal;
+        il.Emit(OpCodes.Stloc, usingLocal);
+
+        // Try block start
+        var tryStart = il.Create(OpCodes.Nop);
+        il.Append(tryStart);
+
+        // Emit remaining statements (recursive for nested using vars)
+        EmitStatementRange(remainingStatements, startIdx, ctx);
+
+        var leaveTarget = il.Create(OpCodes.Nop);
+        il.Emit(OpCodes.Leave, leaveTarget);
+
+        // Finally block
+        var handlerStart = il.Create(OpCodes.Nop);
+        il.Append(handlerStart);
+
+        // Null check before calling Dispose
+        il.Emit(OpCodes.Ldloc, usingLocal);
+        var endFinally = il.Create(OpCodes.Nop);
+        il.Emit(OpCodes.Brfalse, endFinally);
+        il.Emit(OpCodes.Ldloc, usingLocal);
+        il.Emit(OpCodes.Callvirt, ImportDispose());
+        il.Append(endFinally);
+        il.Emit(OpCodes.Endfinally);
+
+        var handlerEnd = il.Create(OpCodes.Nop);
+        il.Append(handlerEnd);
+
+        // Register exception handler
+        var handler = new ExceptionHandler(ExceptionHandlerType.Finally)
+        {
+            TryStart = tryStart,
+            TryEnd = handlerStart,
+            HandlerStart = handlerStart,
+            HandlerEnd = handlerEnd,
+        };
+        ctx.Method.Body.ExceptionHandlers.Add(handler);
+
+        il.Append(leaveTarget);
     }
 
     private void EmitStatement(StatementNode stmt, BodyContext ctx)
@@ -477,16 +542,9 @@ public sealed class ILEmitter
                 break;
 
             case UsingVarDeclaration usingDecl:
-                TypeReference usingType = _module.TypeSystem.Object;
-                if (usingDecl.Initializer != null)
-                {
-                    usingType = EmitExpression(usingDecl.Initializer, ctx) ?? _module.TypeSystem.Object;
-                }
-                var usingLocal = new VariableDefinition(usingType);
-                ctx.Method.Body.Variables.Add(usingLocal);
-                ctx.Locals[usingDecl.Name] = usingLocal;
-                if (usingDecl.Initializer != null)
-                    il.Emit(OpCodes.Stloc, usingLocal);
+                // Handled by EmitStatementRange/EmitUsingVarWithFinally when inside a block.
+                // Fallback: emit as simple local (no try/finally) if reached directly.
+                EmitUsingVarWithFinally(usingDecl, Array.Empty<StatementNode>(), 0, ctx);
                 break;
 
             case ReturnStatement ret:
