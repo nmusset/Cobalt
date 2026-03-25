@@ -1245,6 +1245,54 @@ public sealed class ILEmitter
         return ctor;
     }
 
+    private MethodReference ImportDispose()
+    {
+        var disposable = new TypeReference("System", "IDisposable", _module, _module.TypeSystem.CoreLibrary);
+        return new MethodReference("Dispose", _module.TypeSystem.Void, disposable)
+        {
+            HasThis = true
+        };
+    }
+
+    private MethodReference ImportGetEnumerator()
+    {
+        var enumerable = new TypeReference("System.Collections", "IEnumerable", _module, _module.TypeSystem.CoreLibrary);
+        var enumerator = new TypeReference("System.Collections", "IEnumerator", _module, _module.TypeSystem.CoreLibrary);
+        return new MethodReference("GetEnumerator", enumerator, enumerable)
+        {
+            HasThis = true
+        };
+    }
+
+    private MethodReference ImportMoveNext()
+    {
+        var enumerator = new TypeReference("System.Collections", "IEnumerator", _module, _module.TypeSystem.CoreLibrary);
+        return new MethodReference("MoveNext", _module.TypeSystem.Boolean, enumerator)
+        {
+            HasThis = true
+        };
+    }
+
+    private MethodReference ImportGetCurrent()
+    {
+        var enumerator = new TypeReference("System.Collections", "IEnumerator", _module, _module.TypeSystem.CoreLibrary);
+        return new MethodReference("get_Current", _module.TypeSystem.Object, enumerator)
+        {
+            HasThis = true
+        };
+    }
+
+    private MethodReference ImportInvalidOperationExceptionCtor()
+    {
+        var exType = new TypeReference("System", "InvalidOperationException", _module, _module.TypeSystem.CoreLibrary);
+        var ctor = new MethodReference(".ctor", _module.TypeSystem.Void, exType)
+        {
+            HasThis = true
+        };
+        ctor.Parameters.Add(new ParameterDefinition(_module.TypeSystem.String));
+        return ctor;
+    }
+
     private static void EmitNotImplementedBody(MethodDefinition method)
     {
         var il = method.Body.GetILProcessor();
