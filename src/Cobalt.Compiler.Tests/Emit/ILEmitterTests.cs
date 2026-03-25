@@ -120,10 +120,10 @@ public class ILEmitterTests
         Assert.True(baseType.IsAbstract);
         Assert.True(baseType.IsClass);
 
-        // Private constructor on base
+        // Protected constructor on base (Family visibility so nested variants can call it)
         var baseCtor = baseType.Methods.FirstOrDefault(m => m.Name == ".ctor");
         Assert.NotNull(baseCtor);
-        Assert.True(baseCtor.IsPrivate);
+        Assert.True(baseCtor.IsFamily);
 
         // Nested variant types
         var circle = baseType.NestedTypes.FirstOrDefault(t => t.Name == "Circle");

@@ -127,7 +127,7 @@ public sealed class ILEmitter
         var baseDef = new TypeDefinition(_namespace, union.Name, baseAttrs, _module.TypeSystem.Object);
         // Private constructor prevents external subclassing
         var ctor = new MethodDefinition(".ctor",
-            MethodAttributes.Private | MethodAttributes.HideBySig | MethodAttributes.SpecialName | MethodAttributes.RTSpecialName,
+            MethodAttributes.Family | MethodAttributes.HideBySig | MethodAttributes.SpecialName | MethodAttributes.RTSpecialName,
             _module.TypeSystem.Void);
         var il = ctor.Body.GetILProcessor();
         il.Emit(OpCodes.Ldarg_0);
@@ -275,10 +275,16 @@ public sealed class ILEmitter
                 ctor.Parameters.Add(new ParameterDefinition(field.Name, ParameterAttributes.None, fieldDef.FieldType));
             }
 
-            // Body: call Object.ctor, store each param into field, ret
+            // Body: call base class .ctor, store each param into field, ret
+            var baseCtor = new MethodReference(".ctor", _module.TypeSystem.Void, baseDef)
+            {
+                HasThis = true,
+                ExplicitThis = false,
+                CallingConvention = MethodCallingConvention.Default
+            };
             var il = ctor.Body.GetILProcessor();
             il.Emit(OpCodes.Ldarg_0);
-            il.Emit(OpCodes.Call, DefaultObjectCtor());
+            il.Emit(OpCodes.Call, baseCtor);
             for (int i = 0; i < variant.Fields.Count; i++)
             {
                 var fieldName = variant.Fields[i].Name;
